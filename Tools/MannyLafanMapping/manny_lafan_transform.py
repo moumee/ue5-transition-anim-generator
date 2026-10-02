@@ -126,6 +126,54 @@ def quat_to_matrix(q: dict) -> np.ndarray:
     ])
 
 
+def matrix_to_quat_xyzw(rotation: np.ndarray) -> np.ndarray:
+    """Convert a proper 3x3 rotation matrix to a canonical XYZW quaternion.
+
+    The returned quaternion is normalized and uses a non-negative W component
+    so adjacent frames do not randomly flip between equivalent signs.
+    """
+    matrix = np.asarray(rotation, dtype=np.float64)
+    if matrix.shape != (3, 3) or not np.isfinite(matrix).all():
+        raise ValueError("rotation must be a finite 3x3 matrix")
+    if not np.allclose(matrix @ matrix.T, np.eye(3), atol=1e-6, rtol=0) or not np.isclose(
+        np.linalg.det(matrix), 1.0, atol=1e-6, rtol=0
+    ):
+        raise ValueError("rotation must be a proper orthogonal matrix")
+
+    # Branch on the largest diagonal term to remain stable near 180 degrees.
+    trace = float(np.trace(matrix))
+    if trace > 0.0:
+        scale = 2.0 * np.sqrt(trace + 1.0)
+        w = 0.25 * scale
+        x = (matrix[2, 1] - matrix[1, 2]) / scale
+        y = (matrix[0, 2] - matrix[2, 0]) / scale
+        z = (matrix[1, 0] - matrix[0, 1]) / scale
+    elif matrix[0, 0] > matrix[1, 1] and matrix[0, 0] > matrix[2, 2]:
+        scale = 2.0 * np.sqrt(1.0 + matrix[0, 0] - matrix[1, 1] - matrix[2, 2])
+        w = (matrix[2, 1] - matrix[1, 2]) / scale
+        x = 0.25 * scale
+        y = (matrix[0, 1] + matrix[1, 0]) / scale
+        z = (matrix[0, 2] + matrix[2, 0]) / scale
+    elif matrix[1, 1] > matrix[2, 2]:
+        scale = 2.0 * np.sqrt(1.0 + matrix[1, 1] - matrix[0, 0] - matrix[2, 2])
+        w = (matrix[0, 2] - matrix[2, 0]) / scale
+        x = (matrix[0, 1] + matrix[1, 0]) / scale
+        y = 0.25 * scale
+        z = (matrix[1, 2] + matrix[2, 1]) / scale
+    else:
+        scale = 2.0 * np.sqrt(1.0 + matrix[2, 2] - matrix[0, 0] - matrix[1, 1])
+        w = (matrix[1, 0] - matrix[0, 1]) / scale
+        x = (matrix[0, 2] + matrix[2, 0]) / scale
+        y = (matrix[1, 2] + matrix[2, 1]) / scale
+        z = 0.25 * scale
+
+    quaternion = np.array([x, y, z, w], dtype=np.float64)
+    quaternion /= np.linalg.norm(quaternion)
+    if quaternion[3] < 0.0:
+        quaternion *= -1.0
+    return quaternion
+
+
 def globals_to_locals(rotations, parents):
     rotations = np.asarray(rotations, dtype=np.float64)
     return np.stack([rebuild_local_rotation(rotations[..., j, :, :],
