@@ -21,6 +21,28 @@ def load_model_output(source):
     return json.loads(Path(source).read_text(encoding='utf-8-sig'), object_pairs_hook=unique_object)
 
 
+def numeric_array(value, field):
+    """Check JSON scalar types before NumPy can coerce strings or bools."""
+    import numpy as np
+
+    if not isinstance(value, list):
+        raise ValueError(f'{field} must be an array of JSON numbers.')
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, list):
+            pending.extend(item)
+        elif type(item) not in (int, float):
+            raise ValueError(f'{field} must contain only JSON numbers, not strings, booleans or null.')
+    try:
+        values = np.asarray(value, dtype=np.float64)
+    except (ValueError, TypeError, OverflowError) as error:
+        raise ValueError(f'{field} must be a rectangular array of finite numbers.') from error
+    if not np.isfinite(values).all():
+        raise ValueError(f'{field} must contain only finite numbers.')
+    return values
+
+
 def adapt_document(document, calibration):
     import numpy as np
 
@@ -32,7 +54,7 @@ def adapt_document(document, calibration):
     keys = [key for key in ('predictions_tx135', 'output_tx135', 'vectors_tx135') if key in document]
     if len(keys) != 1:
         raise ValueError('Provide exactly one of predictions_tx135, output_tx135 or vectors_tx135.')
-    states = np.asarray(document[keys[0]], dtype=np.float64)
+    states = numeric_array(document[keys[0]], keys[0])
     if states.ndim != 2 or states.shape[1] != 135 or not 2 <= len(states) <= 10000 or not np.isfinite(states).all():
         raise ValueError('Animation output must contain 2-10000 finite rows of 135 values.')
     for field in ('frame_count', 'sample_count'):
@@ -64,7 +86,7 @@ def adapt_document(document, calibration):
     if len(indices) != len(states) or any(type(i) is not int for i in indices) or np.any(np.diff(indices) != 1):
         raise ValueError('frame_indices must be consecutive integers for a uniformly sampled animation.')
     if 'sample_times_seconds' in document:
-        times = np.asarray(document['sample_times_seconds'], dtype=float)
+        times = numeric_array(document['sample_times_seconds'], 'sample_times_seconds')
         if times.shape != (len(states),) or not np.isfinite(times).all() or not np.allclose(np.diff(times), 1 / rate, atol=1e-6, rtol=0):
             raise ValueError('sample_times_seconds do not match the output frame count and rate.')
 
@@ -74,7 +96,8 @@ def adapt_document(document, calibration):
         if not isinstance(alignment, dict) or 'position_offset_xz' not in alignment or 'rotation_offset' not in alignment:
             raise ValueError('alignment requires position_offset_xz and rotation_offset from the original input.')
         for flat, nested in zip(flat_keys, ('position_offset_xz', 'rotation_offset')):
-            if flat in document and not np.array_equal(np.asarray(document[flat]), np.asarray(alignment[nested])):
+            nested_values = numeric_array(alignment[nested], 'alignment.' + nested)
+            if flat in document and not np.array_equal(numeric_array(document[flat], flat), nested_values):
                 raise ValueError('Conflicting nested and flat heading metadata.')
             document[flat] = alignment[nested]
         # Plugin input already used original root positions before heading alignment.
@@ -90,12 +113,16 @@ def adapt_document(document, calibration):
     if document.get('position_space') == 'lafan_start_centered' and not all(has_heading):
         raise ValueError('lafan_start_centered output requires heading position and rotation offsets.')
     if all(has_heading):
-        position = np.asarray(document[flat_keys[0]], dtype=float)
-        rotation = np.asarray(document[flat_keys[1]], dtype=float)
+        position = numeric_array(document[flat_keys[0]], flat_keys[0])
+        rotation = numeric_array(document[flat_keys[1]], flat_keys[1])
         if position.shape != (2,) or rotation.shape != (3, 3) or not np.isfinite(position).all() or not np.isfinite(rotation).all():
             raise ValueError('Invalid heading offset dimensions or non-finite values.')
         if not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-6, rtol=0) or not np.isclose(np.linalg.det(rotation), 1, atol=1e-6, rtol=0):
             raise ValueError('heading_rotation_offset must be a proper rotation matrix.')
+    if 'root_position_offset_lafan' in document:
+        root_offset = numeric_array(document['root_position_offset_lafan'], 'root_position_offset_lafan')
+        if root_offset.shape != (3,):
+            raise ValueError('root_position_offset_lafan must be a finite XYZ vector.')
     return document
 
 

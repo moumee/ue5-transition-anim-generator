@@ -42,6 +42,7 @@ JSON은 아래 조건을 사용합니다. 이는 플러그인 연결 계약이�
 | 항목 | 조건 |
 | --- | --- |
 | 상태 배열 | `predictions_tx135`, `output_tx135`, `vectors_tx135` 중 하나만 포함. 2~10,000행·135열·유한값 |
+| 숫자 배열 타입 | 상태·시간·heading·root offset 배열은 유한한 JSON 정수·실수만 허용. 숫자 문자열·bool·null은 거부하며, 중첩·평탄 heading을 함께 주면 양쪽을 각각 검사 |
 | 개수 선언 | 선택 사항인 `frame_count`, `sample_count`는 실제 행 수와 같은 정수. `shape`는 실제 `[행 수,135]`와 일치해야 함 |
 | 의미 선언 | `joint_order`, `parents`가 있으면 팀 calibration의 순서·계층과 일치. `rotation_space`는 `parent_local`, `source_position_unit`는 `cm`, `layout`은 `T x (22 joints * rotation6D + Hips XYZ)`만 지원 |
 | 위치 공간 선언 | `position_space`를 제공하면 `lafan_start_centered`와 heading 복원 offset 쌍이 필요. 메타데이터를 생략한 기존 최소 출력과 팀 raw root offset 경로는 유지 |
@@ -150,7 +151,7 @@ Python 입력 검증 회귀 검사는 프로젝트 루트에서 설정한 Python
 & 'C:\Users\young\miniconda3\envs\mib\python.exe' -B 'Plugins/MotionInbetweeningHello/Tests/test_prepare_manny_output.py' -v
 ```
 
-관절 순서·단위/공간·계층, 선언 count/shape, 중복 키, 기존 최소 출력·정상 메타데이터·UTF-8 BOM 호환성을 검사합니다. 다른 PC에서는 위 Python 경로를 해당 환경으로 바꿉니다.
+관절 순서·단위/공간·계층, 선언 count/shape, 중복 키, 숫자 배열의 문자열·bool·null 거부와 중첩·평탄 heading 동시 검사를 수행합니다. 기존 최소 출력·정상 메타데이터·정수와 실수 혼합·UTF-8 BOM 호환성도 검사합니다. 다른 PC에서는 위 Python 경로를 해당 환경으로 바꿉니다.
 
 그다음 새 에디터 프로세스에서 `MotionInbetweeningReload.OutputAssets`를 실행하면 성공한 출력 작업의 저장 에셋을 다시 불러와 같은 검사를 합니다. 의도적으로 생성 에셋을 편집했다면 원래 변환 결과와 달라져 재로딩 검사가 실패할 수 있습니다.
 
