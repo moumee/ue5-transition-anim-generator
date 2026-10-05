@@ -135,42 +135,49 @@ bool StartMannyOutputMapping(const FString& SourceFile, const FOutputMappingOpti
 {
 	OutDirectory.Reset(); OutError.Reset();
 	if (IsMannyOutputMappingRunning()) { OutError = TEXT("An output import is already running."); return false; }
+	LastOutput = FOutputMappingResult();
+	const auto FailStart = [&OutError](const FString& Error)
+	{
+		OutError = Error;
+		LastOutput.Error = Error;
+		if (!LastOutput.OutputDirectory.IsEmpty()) RecordOutcome();
+		return false;
+	};
 	if (!FPaths::FileExists(Options.PythonExecutable))
 	{
-		OutError = TEXT("Set Python Executable in Motion In-betweening Settings (Python 3.11+ with NumPy)."); return false;
+		return FailStart(TEXT("Set Python Executable in Motion In-betweening Settings (Python 3.11+ with NumPy)."));
 	}
-	if (!FPaths::FileExists(SourceFile)) { OutError = TEXT("Select an existing model-output JSON file."); return false; }
+	if (!FPaths::FileExists(SourceFile)) return FailStart(TEXT("Select an existing model-output JSON file."));
 	USkeletalMesh* Mesh = LoadObject<USkeletalMesh>(nullptr, OutputMannyMeshPath);
-	if (!Mesh || !Mesh->GetSkeleton()) { OutError = TEXT("The project's Manny Simple mesh and skeleton are required."); return false; }
+	if (!Mesh || !Mesh->GetSkeleton()) return FailStart(TEXT("The project's Manny Simple mesh and skeleton are required."));
 	const FString Mapping = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / TEXT("Tools/MannyLafanMapping"));
 	const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("MotionInbetweeningHello"));
 	if (!Plugin || !FPaths::FileExists(Mapping / TEXT("convert_lafan_output_to_manny.py")))
 	{
-		OutError = TEXT("The plugin or team's LAFAN-to-Manny mapping tools are missing."); return false;
+		return FailStart(TEXT("The plugin or team's LAFAN-to-Manny mapping tools are missing."));
 	}
 	const FString Worker = FPaths::ConvertRelativePathToFull(Plugin->GetBaseDir() / TEXT("Scripts/prepare_manny_output.py"));
-	if (!FPaths::FileExists(Worker)) { OutError = TEXT("The output adapter script is missing."); return false; }
+	if (!FPaths::FileExists(Worker)) return FailStart(TEXT("The output adapter script is missing."));
 	OutDirectory = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("MotionInbetweening/OutputMapping") /
 		FGuid::NewGuid().ToString(EGuidFormats::Digits));
-	if (!IFileManager::Get().MakeDirectory(*OutDirectory, true)) { OutError = TEXT("Cannot create the output job directory."); return false; }
+	if (!IFileManager::Get().MakeDirectory(*OutDirectory, true)) return FailStart(TEXT("Cannot create the output job directory."));
+	LastOutput.OutputDirectory = OutDirectory;
 	if (IFileManager::Get().Copy(*(OutDirectory / TEXT("source_model_output.json")), *SourceFile, false) != COPY_OK)
 	{
-		OutError = TEXT("Cannot preserve a copy of the model output in the job folder."); return false;
+		return FailStart(TEXT("Cannot preserve a copy of the model output in the job folder."));
 	}
-	if (!ExportMannyReferenceSkeleton(*Mesh, OutDirectory / TEXT("skeleton.json"), OutError)) return false;
+	if (!ExportMannyReferenceSkeleton(*Mesh, OutDirectory / TEXT("skeleton.json"), OutError)) return FailStart(OutError);
 	TSharedRef<FJsonObject> Job = MakeShared<FJsonObject>();
 	Job->SetStringField(TEXT("source_file"), FPaths::ConvertRelativePathToFull(SourceFile));
 	Job->SetStringField(TEXT("mapping_directory"), Mapping);
 	Job->SetStringField(TEXT("output_directory"), OutDirectory);
 	Job->SetStringField(TEXT("statistics_file"), Options.StatisticsFile);
 	const FString JobFile = OutDirectory / TEXT("job.json");
-	if (!SaveJson(JobFile, Job)) { OutError = TEXT("Cannot write the output job settings."); return false; }
+	if (!SaveJson(JobFile, Job)) return FailStart(TEXT("Cannot write the output job settings."));
 	const FString Arguments = FString::Printf(TEXT("\"%s\" --job \"%s\""), *Worker, *JobFile);
 	OutputProcess = FPlatformProcess::CreateProc(*Options.PythonExecutable, *Arguments,
 		false, true, true, nullptr, 0, *FPaths::ProjectDir(), nullptr);
-	if (!OutputProcess.IsValid()) { OutError = TEXT("Cannot start the configured Python executable."); return false; }
-	LastOutput = FOutputMappingResult();
-	LastOutput.OutputDirectory = OutDirectory;
+	if (!OutputProcess.IsValid()) return FailStart(TEXT("Cannot start the configured Python executable."));
 	bOpenAssetOnSuccess = Options.bOpenAsset;
 	StartTime = FPlatformTime::Seconds();
 	OutputTicker = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateStatic(&TickOutputMapping), 0.1f);

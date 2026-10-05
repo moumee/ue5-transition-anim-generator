@@ -42,6 +42,10 @@ JSON은 아래 조건을 사용합니다. 이는 플러그인 연결 계약이�
 | 항목 | 조건 |
 | --- | --- |
 | 상태 배열 | `predictions_tx135`, `output_tx135`, `vectors_tx135` 중 하나만 포함. 2~10,000행·135열·유한값 |
+| 개수 선언 | 선택 사항인 `frame_count`, `sample_count`는 실제 행 수와 같은 정수. `shape`는 실제 `[행 수,135]`와 일치해야 함 |
+| 의미 선언 | `joint_order`, `parents`가 있으면 팀 calibration의 순서·계층과 일치. `rotation_space`는 `parent_local`, `source_position_unit`는 `cm`, `layout`은 `T x (22 joints * rotation6D + Hips XYZ)`만 지원 |
+| 위치 공간 선언 | `position_space`를 제공하면 `lafan_start_centered`와 heading 복원 offset 쌍이 필요. 메타데이터를 생략한 기존 최소 출력과 팀 raw root offset 경로는 유지 |
+| JSON 중복 | 같은 이름의 객체 키를 중복 선언하면 최상위·중첩 객체 모두 거부 |
 | 시간 | `sample_rate_hz` 명시, 0 초과 240 이하. `frame_indices`가 있으면 연속 정수. 31샘플·30fps는 양 끝을 포함해 1초 |
 | 정규화 | `normalization_applied`를 bool로 명시. true면 대응하는 Training Statistics가 필요하고, false면 설정된 통계는 사용하지 않음 |
 | 통계 대응 | `statistics.sha256`가 있으면 설정한 통계와 일치하는지 검사 |
@@ -62,6 +66,8 @@ JSON은 아래 조건을 사용합니다. 이는 플러그인 연결 계약이�
 | `asset_result.json` | 실제 에셋 저장 성공 여부·에셋 경로. `result.json` 성공만으로 에셋 저장 성공을 뜻하지 않음 |
 
 **Tools → Cancel Manny Output Import**로 외부 변환을 중지할 수 있습니다. 120초 제한과 중복 실행 방지가 있고, 에디터 종료 시 외부 작업을 종료합니다. 에셋 생성·저장은 변환이 끝난 뒤 에디터 스레드에서 수행합니다.
+
+작업 폴더를 만든 뒤 복사·skeleton/설정 저장·Python 시작에 실패한 경우에도 쓰기 가능한 폴더에 `asset_result.json`을 남깁니다. 새 시도의 결과는 이전 성공 에셋 정보를 유지하지 않습니다. 폴더 생성 전 실패는 UI 오류와 현재 실패 상태로 확인하며, 폴더 자체에 쓸 수 없으면 영수증 저장 실패를 로그에 남깁니다.
 
 팀 [PR #2](https://github.com/moumee/ue5-transition-anim-generator/pull/2)의 역매핑을 그대로 호출합니다. `Tools/MannyLafanMapping` 원본은 수정하지 않고 `Scripts/prepare_manny_output.py`에서 입력 메타데이터를 맞춥니다. `Private/MotionInbetweeningOutputMapping.*`는 비동기 실행·저장, `MotionInbetweeningOutputData.*`는 실제 reference skeleton 추출·JSON 검증을 담당합니다. `CreateAndSaveAnimation`에 출력 경로 인수를 추가해 기존 테스트 기능을 유지했습니다.
 
@@ -135,6 +141,16 @@ JSON은 아래 조건을 사용합니다. 이는 플러그인 연결 계약이�
 ## 출력 기능 자동화 검사
 
 `MotionInbetweening.MannyOutputMapping`은 실제 Context 출력 fixture를 두 번 가져와 별도 에셋 저장, 89본·31샘플·30fps·1초, 모든 local 키와 재생 값을 검사합니다. 정규화한 quaternion의 상대 회전으로 오차를 계산합니다. raw 재생 기준은 위치 0.001cm·회전 0.001도이고, 기본 ACL 압축의 정밀도를 참고한 압축 재생 기준은 위치 0.01cm·회전 0.2도입니다.
+
+Windows에서는 성공한 가져오기 뒤에 실제 JSON 파일을 실행 파일로 지정해 프로세스 시작 실패를 유도하고, 실패 영수증과 이전 성공 상태 초기화를 검사합니다. 이 단계의 Windows `CreateProc failed`/`URL` 경고 2개만 예상 로그로 지정합니다.
+
+Python 입력 검증 회귀 검사는 프로젝트 루트에서 설정한 Python으로 실행합니다. NumPy 외에 새 패키지는 필요하지 않으며, 팀 매핑이나 모델을 실행하지 않습니다.
+
+```powershell
+& 'C:\Users\young\miniconda3\envs\mib\python.exe' -B 'Plugins/MotionInbetweeningHello/Tests/test_prepare_manny_output.py' -v
+```
+
+관절 순서·단위/공간·계층, 선언 count/shape, 중복 키, 기존 최소 출력·정상 메타데이터·UTF-8 BOM 호환성을 검사합니다. 다른 PC에서는 위 Python 경로를 해당 환경으로 바꿉니다.
 
 그다음 새 에디터 프로세스에서 `MotionInbetweeningReload.OutputAssets`를 실행하면 성공한 출력 작업의 저장 에셋을 다시 불러와 같은 검사를 합니다. 의도적으로 생성 에셋을 편집했다면 원래 변환 결과와 달라져 재로딩 검사가 실패할 수 있습니다.
 

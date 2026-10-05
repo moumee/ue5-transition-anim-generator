@@ -105,6 +105,39 @@ public:
 			return false;
 		}
 		Test->TestTrue(TEXT("Repeated import creates a separate asset"), FirstAsset != Result.AssetPath);
+#if PLATFORM_WINDOWS
+		// An existing JSON file passes the path check but cannot be launched as Python.
+		// Exercise this after a successful import to detect stale success/asset state.
+		auto Bad = Options;
+		Bad.PythonExecutable = Source;
+		FString FailedDirectory, Error;
+		Test->AddExpectedMessage(TEXT("CreateProc failed:"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1, false);
+		Test->AddExpectedMessage(TEXT("URL:"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1, false);
+		if (!Test->TestFalse(TEXT("Reject an existing non-executable Python file"),
+			MotionInbetweening::StartMannyOutputMapping(Source, Bad, FailedDirectory, Error)))
+		{
+			MotionInbetweening::CancelMannyOutputMapping();
+			return true;
+		}
+		const auto Failed = MotionInbetweening::GetLastOutputMappingResult();
+		Test->TestFalse(TEXT("Failed start clears previous success"), Failed.bSuccess);
+		Test->TestTrue(TEXT("Failed start clears previous asset"), Failed.AssetPath.IsEmpty());
+		Test->TestEqual(TEXT("Failed start clears previous sample count"), Failed.SampleCount, 0);
+		Test->TestFalse(TEXT("Failed start leaves no active worker"), MotionInbetweening::IsMannyOutputMappingRunning());
+		Test->TestFalse(TEXT("Failed start identifies a new job"), FailedDirectory.IsEmpty());
+		Test->TestEqual(TEXT("Last result belongs to the failed job"), Failed.OutputDirectory, FailedDirectory);
+		FString ReceiptText, ReceiptError;
+		TSharedPtr<FJsonObject> Receipt;
+		bool bReceiptSuccess = true;
+		if (Test->TestTrue(TEXT("Failed start writes a receipt"),
+			FFileHelper::LoadFileToString(ReceiptText, *(FailedDirectory / TEXT("asset_result.json")))
+			&& FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(ReceiptText), Receipt) && Receipt))
+		{
+			Test->TestTrue(TEXT("Failed receipt declares failure"), Receipt->TryGetBoolField(TEXT("success"), bReceiptSuccess) && !bReceiptSuccess);
+			Test->TestTrue(TEXT("Failed receipt includes the start error"), Receipt->TryGetStringField(TEXT("error"), ReceiptError) && !ReceiptError.IsEmpty() && ReceiptError == Error);
+		}
+		Test->AddInfo(FString::Printf(TEXT("Verified failed-start receipt after successful import: %s"), *FailedDirectory));
+#endif
 		return true;
 	}
 private:

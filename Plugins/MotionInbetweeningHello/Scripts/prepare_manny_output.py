@@ -8,9 +8,24 @@ import traceback
 from prepare_manny_input import file_hash, save_json
 
 
-def adapt_document(document):
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f'Duplicate JSON key: {key}.')
+        result[key] = value
+    return result
+
+
+def load_model_output(source):
+    return json.loads(Path(source).read_text(encoding='utf-8-sig'), object_pairs_hook=unique_object)
+
+
+def adapt_document(document, calibration):
     import numpy as np
 
+    if not isinstance(document, dict):
+        raise ValueError('Model output must be a JSON object.')
     document = dict(document)
     if type(document.get('normalization_applied')) is not bool:
         raise ValueError('Model output must explicitly declare normalization_applied: true or false.')
@@ -20,6 +35,28 @@ def adapt_document(document):
     states = np.asarray(document[keys[0]], dtype=np.float64)
     if states.ndim != 2 or states.shape[1] != 135 or not 2 <= len(states) <= 10000 or not np.isfinite(states).all():
         raise ValueError('Animation output must contain 2-10000 finite rows of 135 values.')
+    for field in ('frame_count', 'sample_count'):
+        if field in document and (type(document[field]) is not int or document[field] != len(states)):
+            raise ValueError(f'{field} must equal the actual output row count ({len(states)}).')
+    if 'shape' in document:
+        shape = document['shape']
+        if not isinstance(shape, list) or any(type(value) is not int for value in shape) or shape != list(states.shape):
+            raise ValueError(f'shape must match the actual output dimensions {list(states.shape)}.')
+    # The team mapper decodes one fixed layout. Reject declarations that would
+    # otherwise be silently interpreted using a different joint order or unit.
+    for field, value_type in (('joint_order', str), ('parents', int)):
+        if field in document:
+            values = document[field]
+            if not isinstance(values, list) or any(type(value) is not value_type for value in values) or values != calibration[field]:
+                raise ValueError(f'{field} must match the team LAFAN1 mapping calibration.')
+    for field, expected in (
+        ('layout', 'T x (22 joints * rotation6D + Hips XYZ)'),
+        ('rotation_space', 'parent_local'),
+        ('source_position_unit', 'cm'),
+        ('position_space', 'lafan_start_centered'),
+    ):
+        if field in document and document[field] != expected:
+            raise ValueError(f'Unsupported {field}; expected {expected}.')
     rate = document.get('sample_rate_hz')
     if isinstance(rate, bool) or not isinstance(rate, (int, float)) or not np.isfinite(rate) or not 0 < rate <= 240:
         raise ValueError('Declare sample_rate_hz between 0 (exclusive) and 240.')
@@ -48,8 +85,10 @@ def adapt_document(document):
     if any(has_heading) != all(has_heading):
         raise ValueError('Heading restoration requires both position and rotation offsets.')
     declared_heading = document.get('heading_alignment_applied')
-    if declared_heading is not None and (type(declared_heading) is not bool or declared_heading != all(has_heading)):
+    if 'heading_alignment_applied' in document and (type(declared_heading) is not bool or declared_heading != all(has_heading)):
         raise ValueError('heading_alignment_applied conflicts with the supplied heading offsets.')
+    if document.get('position_space') == 'lafan_start_centered' and not all(has_heading):
+        raise ValueError('lafan_start_centered output requires heading position and rotation offsets.')
     if all(has_heading):
         position = np.asarray(document[flat_keys[0]], dtype=float)
         rotation = np.asarray(document[flat_keys[1]], dtype=float)
@@ -67,7 +106,8 @@ def prepare(job):
     from convert_lafan_output_to_manny import convert_document
 
     source = directory / 'source_model_output.json'
-    document = adapt_document(json.loads(source.read_text(encoding='utf-8-sig')))
+    calibration = json.loads((mapping / 'rest_pose_corrections_22_prototype.json').read_text(encoding='utf-8'))
+    document = adapt_document(load_model_output(source), calibration)
     stats = job.get('statistics_file') if document['normalization_applied'] else None
     if document['normalization_applied'] and (not stats or not Path(stats).is_file()):
         raise ValueError('Normalized model output requires its Training Statistics in the plugin settings.')
@@ -75,7 +115,6 @@ def prepare(job):
     declared_stats = document.get('statistics') or {}
     if stats and declared_stats.get('sha256') and declared_stats['sha256'] != statistics['sha256']:
         raise ValueError('Training Statistics hash does not match the statistics declared in the model output.')
-    calibration = json.loads((mapping / 'rest_pose_corrections_22_prototype.json').read_text(encoding='utf-8'))
     skeleton = json.loads((directory / 'skeleton.json').read_text(encoding='utf-8'))
     converted = convert_document(document, calibration, stats_path=stats, skeleton=skeleton)
     if not converted['validation']['passed']:
