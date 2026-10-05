@@ -12,6 +12,10 @@
 	],
 	"Plugins": [
 		{
+			"Name": "MotionInbetweeningHello",
+			"Enabled": true
+		},
+		{
 			"Name": "ModelingToolsEditorMode",
 			"Enabled": true,
 			"TargetAllowList": [

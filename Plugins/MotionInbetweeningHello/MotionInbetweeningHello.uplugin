@@ -1,0 +1,20 @@
+{
+	"FileVersion": 3,
+	"Version": 2,
+	"VersionName": "1.1",
+	"FriendlyName": "Motion In-betweening Hello",
+	"Description": "Manny animation generation and team LAFAN1 input-mapping integration for the Unreal Editor.",
+	"Category": "Editor",
+	"CanContainContent": false,
+	"Plugins": [
+		{ "Name": "PythonScriptPlugin", "Enabled": true },
+		{ "Name": "EditorScriptingUtilities", "Enabled": true }
+	],
+	"Modules": [
+		{
+			"Name": "MotionInbetweeningHello",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	]
+}

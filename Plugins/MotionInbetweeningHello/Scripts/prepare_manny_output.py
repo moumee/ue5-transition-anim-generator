@@ -1,0 +1,180 @@
+"""Adapt plugin metadata, then call the unchanged team inverse mapper."""
+import argparse
+import json
+from pathlib import Path
+import sys
+import traceback
+
+from prepare_manny_input import file_hash, save_json
+
+
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f'Duplicate JSON key: {key}.')
+        result[key] = value
+    return result
+
+
+def load_model_output(source):
+    return json.loads(Path(source).read_text(encoding='utf-8-sig'), object_pairs_hook=unique_object)
+
+
+def numeric_array(value, field):
+    """Check JSON scalar types before NumPy can coerce strings or bools."""
+    import numpy as np
+
+    if not isinstance(value, list):
+        raise ValueError(f'{field} must be an array of JSON numbers.')
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, list):
+            pending.extend(item)
+        elif type(item) not in (int, float):
+            raise ValueError(f'{field} must contain only JSON numbers, not strings, booleans or null.')
+    try:
+        values = np.asarray(value, dtype=np.float64)
+    except (ValueError, TypeError, OverflowError) as error:
+        raise ValueError(f'{field} must be a rectangular array of finite numbers.') from error
+    if not np.isfinite(values).all():
+        raise ValueError(f'{field} must contain only finite numbers.')
+    return values
+
+
+def adapt_document(document, calibration):
+    import numpy as np
+
+    if not isinstance(document, dict):
+        raise ValueError('Model output must be a JSON object.')
+    document = dict(document)
+    if type(document.get('normalization_applied')) is not bool:
+        raise ValueError('Model output must explicitly declare normalization_applied: true or false.')
+    keys = [key for key in ('predictions_tx135', 'output_tx135', 'vectors_tx135') if key in document]
+    if len(keys) != 1:
+        raise ValueError('Provide exactly one of predictions_tx135, output_tx135 or vectors_tx135.')
+    states = numeric_array(document[keys[0]], keys[0])
+    if states.ndim != 2 or states.shape[1] != 135 or not 2 <= len(states) <= 10000 or not np.isfinite(states).all():
+        raise ValueError('Animation output must contain 2-10000 finite rows of 135 values.')
+    for field in ('frame_count', 'sample_count'):
+        if field in document and (type(document[field]) is not int or document[field] != len(states)):
+            raise ValueError(f'{field} must equal the actual output row count ({len(states)}).')
+    if 'shape' in document:
+        shape = document['shape']
+        if not isinstance(shape, list) or any(type(value) is not int for value in shape) or shape != list(states.shape):
+            raise ValueError(f'shape must match the actual output dimensions {list(states.shape)}.')
+    # The team mapper decodes one fixed layout. Reject declarations that would
+    # otherwise be silently interpreted using a different joint order or unit.
+    for field, value_type in (('joint_order', str), ('parents', int)):
+        if field in document:
+            values = document[field]
+            if not isinstance(values, list) or any(type(value) is not value_type for value in values) or values != calibration[field]:
+                raise ValueError(f'{field} must match the team LAFAN1 mapping calibration.')
+    for field, expected in (
+        ('layout', 'T x (22 joints * rotation6D + Hips XYZ)'),
+        ('rotation_space', 'parent_local'),
+        ('source_position_unit', 'cm'),
+        ('position_space', 'lafan_start_centered'),
+    ):
+        if field in document and document[field] != expected:
+            raise ValueError(f'Unsupported {field}; expected {expected}.')
+    rate = document.get('sample_rate_hz')
+    if isinstance(rate, bool) or not isinstance(rate, (int, float)) or not np.isfinite(rate) or not 0 < rate <= 240:
+        raise ValueError('Declare sample_rate_hz between 0 (exclusive) and 240.')
+    indices = document.get('frame_indices', list(range(len(states))))
+    if len(indices) != len(states) or any(type(i) is not int for i in indices) or np.any(np.diff(indices) != 1):
+        raise ValueError('frame_indices must be consecutive integers for a uniformly sampled animation.')
+    if 'sample_times_seconds' in document:
+        times = numeric_array(document['sample_times_seconds'], 'sample_times_seconds')
+        if times.shape != (len(states),) or not np.isfinite(times).all() or not np.allclose(np.diff(times), 1 / rate, atol=1e-6, rtol=0):
+            raise ValueError('sample_times_seconds do not match the output frame count and rate.')
+
+    alignment = document.get('alignment')
+    flat_keys = ('heading_position_offset_xz', 'heading_rotation_offset')
+    if alignment is not None:
+        if not isinstance(alignment, dict) or 'position_offset_xz' not in alignment or 'rotation_offset' not in alignment:
+            raise ValueError('alignment requires position_offset_xz and rotation_offset from the original input.')
+        for flat, nested in zip(flat_keys, ('position_offset_xz', 'rotation_offset')):
+            nested_values = numeric_array(alignment[nested], 'alignment.' + nested)
+            if flat in document and not np.array_equal(numeric_array(document[flat], flat), nested_values):
+                raise ValueError('Conflicting nested and flat heading metadata.')
+            document[flat] = alignment[nested]
+        # Plugin input already used original root positions before heading alignment.
+        # Applying the raw mapper offset a second time would shift the result twice.
+        if 'root_position_offset_lafan' in document:
+            raise ValueError('Plugin alignment must not also include root_position_offset_lafan.')
+    has_heading = [key in document for key in flat_keys]
+    if any(has_heading) != all(has_heading):
+        raise ValueError('Heading restoration requires both position and rotation offsets.')
+    declared_heading = document.get('heading_alignment_applied')
+    if 'heading_alignment_applied' in document and (type(declared_heading) is not bool or declared_heading != all(has_heading)):
+        raise ValueError('heading_alignment_applied conflicts with the supplied heading offsets.')
+    if document.get('position_space') == 'lafan_start_centered' and not all(has_heading):
+        raise ValueError('lafan_start_centered output requires heading position and rotation offsets.')
+    if all(has_heading):
+        position = numeric_array(document[flat_keys[0]], flat_keys[0])
+        rotation = numeric_array(document[flat_keys[1]], flat_keys[1])
+        if position.shape != (2,) or rotation.shape != (3, 3) or not np.isfinite(position).all() or not np.isfinite(rotation).all():
+            raise ValueError('Invalid heading offset dimensions or non-finite values.')
+        if not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-6, rtol=0) or not np.isclose(np.linalg.det(rotation), 1, atol=1e-6, rtol=0):
+            raise ValueError('heading_rotation_offset must be a proper rotation matrix.')
+    if 'root_position_offset_lafan' in document:
+        root_offset = numeric_array(document['root_position_offset_lafan'], 'root_position_offset_lafan')
+        if root_offset.shape != (3,):
+            raise ValueError('root_position_offset_lafan must be a finite XYZ vector.')
+    return document
+
+
+def prepare(job):
+    directory = Path(job['output_directory'])
+    mapping = Path(job['mapping_directory'])
+    sys.path.insert(0, str(mapping))
+    from convert_lafan_output_to_manny import convert_document
+
+    source = directory / 'source_model_output.json'
+    calibration = json.loads((mapping / 'rest_pose_corrections_22_prototype.json').read_text(encoding='utf-8'))
+    document = adapt_document(load_model_output(source), calibration)
+    stats = job.get('statistics_file') if document['normalization_applied'] else None
+    if document['normalization_applied'] and (not stats or not Path(stats).is_file()):
+        raise ValueError('Normalized model output requires its Training Statistics in the plugin settings.')
+    statistics = {'sha256': file_hash(stats), 'file': str(stats)} if stats else None
+    declared_stats = document.get('statistics') or {}
+    if stats and declared_stats.get('sha256') and declared_stats['sha256'] != statistics['sha256']:
+        raise ValueError('Training Statistics hash does not match the statistics declared in the model output.')
+    skeleton = json.loads((directory / 'skeleton.json').read_text(encoding='utf-8'))
+    converted = convert_document(document, calibration, stats_path=stats, skeleton=skeleton)
+    if not converted['validation']['passed']:
+        raise ValueError('The team inverse mapper rejected the result: ' + json.dumps(converted['validation']))
+    converted['adapter_provenance'] = {
+        'source_file': job['source_file'], 'source_sha256': file_hash(source),
+        'statistics': statistics, 'skeleton_sha256': file_hash(directory / 'skeleton.json'),
+        'heading_restored': 'heading_rotation_offset' in document,
+        'mapping_source_sha256': {name: file_hash(mapping / name) for name in (
+            'convert_lafan_output_to_manny.py', 'manny_lafan_transform.py',
+            'official_context_preprocess.py', 'rest_pose_corrections_22_prototype.json')},
+    }
+    save_json(directory / 'manny_pose.json', converted)
+    return {'success': True, 'sample_count': converted['frame_count'],
+            'source_was_normalized': document['normalization_applied'],
+            'heading_restored': 'heading_rotation_offset' in document}
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--job', required=True)
+    args = parser.parse_args()
+    job = json.loads(Path(args.job).read_text(encoding='utf-8-sig'))
+    directory = Path(job['output_directory'])
+    try:
+        result = prepare(job)
+    except Exception as error:
+        (directory / 'error.log').write_text(traceback.format_exc(), encoding='utf-8')
+        save_json(directory / 'result.json', {'success': False, 'error': str(error)})
+        return 1
+    save_json(directory / 'result.json', result)
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
