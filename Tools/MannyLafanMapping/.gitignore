@@ -6,3 +6,4 @@ manny_skeleton_ue*.json
 manny_walk_*_sequence.json
 manny_*_135_raw.json
 manny_*_roundtrip.json
+lafan_*_manny_pose.json
