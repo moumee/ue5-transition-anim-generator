@@ -4,7 +4,18 @@
 
 ## 전달할 위치와 내용
 
-같은 저장소의 `Tools/MotionInference/`에 기능별 브랜치로 작업하고 main 대상 PR로 전달하는 방식을 제안합니다.
+호출기는 현재 [codex/plugin-inference-runner 브랜치](https://github.com/moumee/ue5-transition-anim-generator/tree/codex/plugin-inference-runner)에 공유했습니다. **개발 중인 연결 작업이며 main에는 반영하지 않았습니다.** 실제 모델 코드·샘플을 받아 연결을 확인할 예정입니다.
+
+기존 저장소에서 아래 명령으로 호출기 브랜치를 가져와 별도 기능 브랜치에서 작업할 수 있습니다. `feature/model-inference-entry`는 예시 이름이며 기존 작업이 있으면 새 이름을 사용합니다.
+
+```bash
+git fetch origin
+git switch -c feature/model-inference-entry origin/codex/plugin-inference-runner
+```
+
+새로 받는 경우에는 [저장소](https://github.com/moumee/ue5-transition-anim-generator)를 clone할 때 `--branch codex/plugin-inference-runner`를 지정하면 됩니다. 로컬 수정이 있으면 그 작업을 보존한 뒤 브랜치를 전환합니다.
+
+추론 코드는 `Tools/MotionInference/`에 작업하고, 연결용 PR의 **base는 `codex/plugin-inference-runner`**로 지정해 전달하는 방식을 제안합니다. 실제 모델 연결·검증을 마치기 전에는 main에 병합하지 않습니다.
 
 - `infer.py`: 기존 추론 함수를 호출하는 진입점. 아래 `--request` JSON을 읽고 지정한 파일에 결과를 씁니다. 기존 CLI가 있으면 먼저 실행법과 샘플을 공유해도 됩니다.
 - `requirements.txt`와 실행 안내: 확인한 Python·PyTorch·CUDA 버전, CPU/GPU 지원, 환경 준비 및 재현 명령.
