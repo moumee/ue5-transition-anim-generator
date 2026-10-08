@@ -3,6 +3,7 @@
 #include "MotionInbetweeningAnimationData.h"
 #include "MotionInbetweeningAnimSequence.h"
 #include "MotionInbetweeningHelloModule.h"
+#include "MotionInbetweeningInference.h"
 #include "MotionInbetweeningMappingSettings.h"
 #include "MotionInbetweeningOutputData.h"
 #include "Animation/AnimSequence.h"
@@ -135,6 +136,7 @@ bool StartMannyOutputMapping(const FString& SourceFile, const FOutputMappingOpti
 {
 	OutDirectory.Reset(); OutError.Reset();
 	if (IsMannyOutputMappingRunning()) { OutError = TEXT("An output import is already running."); return false; }
+	if (IsMannyInferenceRunning() && !Options.bFromInference) { OutError = TEXT("The inference pipeline currently owns output importing."); return false; }
 	LastOutput = FOutputMappingResult();
 	const auto FailStart = [&OutError](const FString& Error)
 	{

@@ -1,6 +1,6 @@
 # MotionInbetweeningHello
 
-UE 5.8 Editor 플러그인. **Manny 애니메이션을 모델 입력으로 내보내기**, **모델 출력 JSON을 Manny 애니메이션 에셋으로 가져오기**, 기존 테스트 애니메이션 생성을 제공합니다. 모델 추론 호출은 아직 연결하지 않았습니다.
+UE 5.8 Editor 플러그인. **Manny 입력 내보내기**, **외부 추론 실행과 결과 에셋 저장**, **출력 JSON 직접 가져오기**, 기존 테스트 애니메이션 생성을 제공합니다. 외부 추론 호출기는 준비했으며 실제 모델 진입점과 실행 샘플은 팀 전달 대기입니다.
 
 ## Manny 모델 입력 내보내기
 
@@ -26,7 +26,23 @@ Python은 **3.11 이상 + NumPy**가 필요합니다. 팀원 의존성은 프로
 
 중복 실행은 막으며 **Tools → Cancel Manny Input Export**로 변환을 중지할 수 있습니다. 외부 변환은 120초 제한이고 에디터 종료 시 해당 작업을 종료합니다. 실패 이유는 `LogMotionInbetweeningHello`와 작업 폴더에 기록합니다.
 
-입력 매핑은 [팀 PR #1](https://github.com/moumee/ue5-transition-anim-generator/pull/1)의 `c1399e3`을 그대로 호출합니다. `Tools/MannyLafanMapping` 코드는 수정하지 않았습니다. 이 메뉴는 **모델 입력 준비까지**입니다. 역매핑과 생성 에셋 저장은 아래 출력 가져오기 메뉴로 연결했으며 모델 추론 호출은 후속 작업입니다. 현재 JSON은 플러그인 연결용 형식이며 팀 전체의 최종 전달 규격으로 확정한 것은 아닙니다.
+입력 매핑은 [팀 PR #1](https://github.com/moumee/ue5-transition-anim-generator/pull/1)의 `c1399e3`을 그대로 호출합니다. `Tools/MannyLafanMapping` 코드는 수정하지 않았습니다. 이 메뉴는 **모델 입력 준비까지**입니다. 준비한 파일은 아래 추론 메뉴 또는 팀 추론 코드에서 사용합니다. 현재 JSON은 플러그인 연결용 형식이며 팀 전체의 최종 전달 규격으로 확정한 것은 아닙니다.
+
+## 시작·도착 입력으로 전환 생성
+
+팀에서 [추론 연결 제안](../../Tools/MotionInference/README.md)에 맞는 실행 코드를 받으면 다음 순서로 사용합니다.
+
+1. 시작·도착 Manny 애니메이션을 각각 위 메뉴로 내보내 `model_input.json` 두 개를 준비합니다. 같은 모델 통계 설정을 사용합니다.
+2. **Tools → Motion In-betweening Settings**에서 `Inference Script`, `Model Config`를 지정합니다. 모델용 Python 환경이 다르면 `Inference Python`도 지정합니다. 비우면 기존 `Python Executable`을 사용합니다.
+3. `Transition Samples`는 마지막 문맥과 도착 목표 사이의 샘플 수입니다. 기본 20이면 문맥 10 + 생성 20 + 목표 1 = 31샘플입니다. 모델의 지원 길이를 확인해 설정합니다.
+4. **Tools → Generate Manny Transition from Model Inputs**를 누르고 START 입력, DESTINATION 입력 순서로 선택합니다. 시작 파일의 마지막 10샘플과 도착 파일의 첫 샘플을 사용합니다.
+5. 추론·출력 검증·역매핑·저장이 성공하면 새 Manny 에셋을 열어 줍니다. 실제 생성 품질은 에디터에서 따로 확인합니다.
+
+**Cancel Manny Transition Generation**으로 중지하고 **Open Last Manny Transition Job**으로 실행 기록을 엽니다. 기본 제한은 300초이며 설정할 수 있습니다. 취소·시간 초과·에디터 종료는 호출기와 자식 추론 프로세스를 함께 종료합니다. 결과 역매핑 단계에는 기존 120초 제한이 적용됩니다. 추론 중에는 다른 추론이나 직접 출력 가져오기를 시작할 수 없습니다.
+
+작업별 `Saved/MotionInbetweening/Inference/<ID>/`에 입력 사본, `job.json`, `request.json`, `model_stdout.log`, `model_stderr.log`, `model_output.json`, Python 검증 `result.json`과 최종 `pipeline_result.json`을 보관합니다. 실패 위치에 따라 일부 파일은 없을 수 있으며 쓰기 가능한 작업 폴더에는 최종 실패·취소 상태를 남깁니다. `pipeline_result.json`의 `success=true`와 `stage=completed`가 실제 에셋 저장 완료입니다. 출력 변환 폴더와 에셋 경로도 이 파일에서 찾습니다.
+
+이 버전은 내보낸 구간을 사용하며 애니메이션의 임의 시간 구간을 지정하는 UI는 아직 없습니다. 시험용 `Tests/Fixtures/inference_fixture_backend.py`는 저장된 포즈를 반복할 뿐이며 실제 추론으로 사용하지 않습니다.
 
 ## 모델 출력 JSON을 애니메이션으로 가져오기
 
@@ -98,7 +114,7 @@ JSON은 아래 조건을 사용합니다. 이는 플러그인 연결 계약이�
 | `Private/Tests/MotionInbetweeningAnimationTests.cpp` | 잘못된 입력 거부와 저장된 에셋 재로딩·재생 데이터 검사 |
 | `Private/Tests/MotionInbetweeningMappingTests.cpp` | 실제 Manny 입력 추출·변환과 잘못된 설정·중복 실행 거부 검사 |
 
-기존 테스트 메뉴는 그대로 두고, 출력 메뉴에서 **팀 역매핑 → 검증된 FAnimationSamples → CreateAndSaveAnimation**을 호출합니다. 입력·출력 사이의 실제 모델 추론 호출과 전환 구간 선택 UI는 후속 연결 대상입니다.
+기존 테스트 메뉴는 그대로 두고, 출력 메뉴에서 **팀 역매핑 → 검증된 FAnimationSamples → CreateAndSaveAnimation**을 호출합니다. `Private/MotionInbetweeningInference.*`와 `Scripts/run_manny_inference.py`는 외부 추론과 이 출력 경로를 연결합니다. 실제 모델 진입점 수신·재현과 전환 구간 선택 UI는 후속 대상입니다.
 
 현재 내부 입력 가정은 Unreal 좌표계의 **부모 기준 local 절대 transform**, 위치 **cm**, 회전 **정규화한 quaternion (X,Y,Z,W)**, 양수 스케일입니다. delta/global 포즈를 직접 넣으면 안 됩니다. 이는 데모 가정이며 팀의 합의된 전달 규격이 아닙니다. 전달하지 않은 본은 Skeleton의 reference pose를 사용합니다.
 
@@ -140,6 +156,10 @@ JSON은 아래 조건을 사용합니다. 이는 플러그인 연결 계약이�
 작업 기록: `C:/Users/young/prg/School/게임 공학/지식/20_Manny입력매핑_플러그인연결_2026-09-30.md`. 기존 애니메이션 생성 기록은 같은 폴더의 `09_Manny테스트애니메이션_구현검증_2026-09-14.md`에 있습니다.
 
 ## 출력 기능 자동화 검사
+
+추론 호출 검사는 프로젝트 루트에서 Python으로 `-X utf8 -B -m unittest discover -s Plugins/MotionInbetweeningHello/Tests -p "test_*.py" -v`를 실행합니다. 공백·한글 경로의 실제 자식 프로세스, 입력·요청 ID·출력 길이·정규화 통계·heading 검증, 오류 로그 보존을 포함합니다.
+
+`MotionInbetweening.MannyInference`는 시험용 실행기로 호출→출력 변환→에셋 저장, 중복 실행 방지, 실패 상태 초기화, 자식 프로세스를 포함한 취소·시간 초과를 검사합니다. 실제 모델을 실행하거나 모션 품질을 평가하지 않습니다. 성공한 에셋은 아래 새 프로세스 재로딩 검사에도 포함됩니다.
 
 `MotionInbetweening.MannyOutputMapping`은 실제 Context 출력 fixture를 두 번 가져와 별도 에셋 저장, 89본·31샘플·30fps·1초, 모든 local 키와 재생 값을 검사합니다. 정규화한 quaternion의 상대 회전으로 오차를 계산합니다. raw 재생 기준은 위치 0.001cm·회전 0.001도이고, 기본 ACL 압축의 정밀도를 참고한 압축 재생 기준은 위치 0.01cm·회전 0.2도입니다.
 

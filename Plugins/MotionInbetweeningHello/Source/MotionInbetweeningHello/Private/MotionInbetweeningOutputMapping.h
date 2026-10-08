@@ -9,6 +9,8 @@ struct FOutputMappingOptions
 	FString PythonExecutable;
 	FString StatisticsFile;
 	bool bOpenAsset = true;
+	// Internal ownership flag: the inference pipeline reserves output importing.
+	bool bFromInference = false;
 };
 struct FOutputMappingResult
 {

@@ -4,9 +4,11 @@
 #include "MotionInbetweeningAnimSequence.h"
 #include "MotionInbetweeningMapping.h"
 #include "MotionInbetweeningOutputMapping.h"
+#include "MotionInbetweeningInference.h"
 #include "DesktopPlatformModule.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Misc/Paths.h"
+#include "HAL/PlatformProcess.h"
 #include "Animation/AnimSequence.h"
 #include "ContentBrowserModule.h"
 #include "IContentBrowserSingleton.h"
@@ -36,6 +38,7 @@ void FMotionInbetweeningHelloModule::StartupModule()
 
 void FMotionInbetweeningHelloModule::ShutdownModule()
 {
+	MotionInbetweening::CancelMannyInference();
 	MotionInbetweening::ShutdownMannyInputMapping();
 	MotionInbetweening::CancelMannyOutputMapping();
 	// Remove callbacks and owned entries before this module instance is destroyed.
@@ -79,13 +82,32 @@ void FMotionInbetweeningHelloModule::RegisterMenus()
 		LOCTEXT("ImportMannyOutputLabel", "Import Model Output as Manny Animation"),
 		LOCTEXT("ImportMannyOutputTooltip", "Select a model-output JSON, restore its Manny pose, save a new Animation Sequence and open the preview."),
 		FSlateIcon(), FUIAction(FExecuteAction::CreateRaw(this, &FMotionInbetweeningHelloModule::ExecuteImportMannyOutputCommand),
-			FCanExecuteAction::CreateLambda([] { return !MotionInbetweening::IsMannyOutputMappingRunning(); })));
+			FCanExecuteAction::CreateLambda([] { return !MotionInbetweening::IsMannyOutputMappingRunning() && !MotionInbetweening::IsMannyInferenceRunning(); })));
+	Section.AddMenuEntry(
+		"MotionInbetweeningHello.RunInference",
+		LOCTEXT("RunInferenceLabel", "Generate Manny Transition from Model Inputs"),
+		LOCTEXT("RunInferenceTooltip", "Choose start and destination model_input.json files, run the configured model, and save its Manny animation."),
+		FSlateIcon(), FUIAction(FExecuteAction::CreateRaw(this, &FMotionInbetweeningHelloModule::ExecuteMannyInferenceCommand),
+			FCanExecuteAction::CreateLambda([] { return !MotionInbetweening::IsMannyInferenceRunning() && !MotionInbetweening::IsMannyOutputMappingRunning(); })));
+	Section.AddMenuEntry(
+		"MotionInbetweeningHello.CancelInference",
+		LOCTEXT("CancelInferenceLabel", "Cancel Manny Transition Generation"),
+		LOCTEXT("CancelInferenceTooltip", "Stop the current inference process tree or its output import."),
+		FSlateIcon(), FUIAction(FExecuteAction::CreateStatic(&MotionInbetweening::CancelMannyInference),
+			FCanExecuteAction::CreateStatic(&MotionInbetweening::IsMannyInferenceRunning)));
+	Section.AddMenuEntry(
+		"MotionInbetweeningHello.OpenInferenceJob",
+		LOCTEXT("OpenInferenceJobLabel", "Open Last Manny Transition Job"),
+		LOCTEXT("OpenInferenceJobTooltip", "Open the request, model logs and final import receipt."),
+		FSlateIcon(), FUIAction(FExecuteAction::CreateLambda([] {
+			FPlatformProcess::ExploreFolder(*MotionInbetweening::GetLastInferenceResult().OutputDirectory);
+		}), FCanExecuteAction::CreateLambda([] { return !MotionInbetweening::GetLastInferenceResult().OutputDirectory.IsEmpty(); })));
 	Section.AddMenuEntry(
 		"MotionInbetweeningHello.CancelOutputMapping",
 		LOCTEXT("CancelOutputMappingLabel", "Cancel Manny Output Import"),
 		LOCTEXT("CancelOutputMappingTooltip", "Stop the active model-output conversion before asset creation."),
 		FSlateIcon(), FUIAction(FExecuteAction::CreateStatic(&MotionInbetweening::CancelMannyOutputMapping),
-			FCanExecuteAction::CreateStatic(&MotionInbetweening::IsMannyOutputMappingRunning)));
+			FCanExecuteAction::CreateLambda([] { return MotionInbetweening::IsMannyOutputMappingRunning() && !MotionInbetweening::IsMannyInferenceRunning(); })));
 	Section.AddMenuEntry(
 		"MotionInbetweeningHello.CancelMapping",
 		LOCTEXT("CancelMappingLabel", "Cancel Manny Input Export"),
@@ -115,6 +137,33 @@ void FMotionInbetweeningHelloModule::ExecuteImportMannyOutputCommand()
 	UE_LOG(LogMotionInbetweeningHello, Warning, TEXT("Manny output import could not start: %s"), *Error);
 	FNotificationInfo Info(FText::FromString(Error));
 	Info.ExpireDuration = 10;
+	FSlateNotificationManager::Get().AddNotification(Info);
+}
+
+void FMotionInbetweeningHelloModule::ExecuteMannyInferenceCommand()
+{
+	const auto Options = MotionInbetweening::GetInferenceOptions();
+	FString Error, Directory;
+	if (!FPaths::FileExists(Options.InferenceScript) || !FPaths::FileExists(Options.ModelConfigFile))
+	{
+		Error = TEXT("Set the team's Inference Script and Model Config in the Inference settings first.");
+		ExecuteMappingSettingsCommand();
+	}
+	else if (IDesktopPlatform* Desktop = FDesktopPlatformModule::TryGet())
+	{
+		TArray<FString> StartFiles, EndFiles;
+		const void* Parent = FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr);
+		const FString InputDirectory = FPaths::ProjectSavedDir() / TEXT("MotionInbetweening/InputMapping");
+		if (!Desktop->OpenFileDialog(Parent, TEXT("1. Select START motion model_input.json (last 10 samples)"), InputDirectory,
+			TEXT(""), TEXT("JSON files (*.json)|*.json"), 0, StartFiles) || StartFiles.Num() != 1) return;
+		if (!Desktop->OpenFileDialog(Parent, TEXT("2. Select DESTINATION motion model_input.json (first sample)"), InputDirectory,
+			TEXT(""), TEXT("JSON files (*.json)|*.json"), 0, EndFiles) || EndFiles.Num() != 1) return;
+		if (MotionInbetweening::StartMannyInference(StartFiles[0], EndFiles[0], Options, Directory, Error)) return;
+	}
+	else Error = TEXT("The file picker is unavailable on this platform.");
+	UE_LOG(LogMotionInbetweeningHello, Warning, TEXT("Manny inference could not start: %s"), *Error);
+	FNotificationInfo Info(FText::FromString(Error));
+	Info.ExpireDuration = 12;
 	FSlateNotificationManager::Get().AddNotification(Info);
 }
 
