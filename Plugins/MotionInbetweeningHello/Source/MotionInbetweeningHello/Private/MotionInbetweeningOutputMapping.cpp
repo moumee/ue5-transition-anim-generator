@@ -31,10 +31,10 @@ namespace
 FProcHandle OutputProcess;
 FTSTicker::FDelegateHandle OutputTicker;
 FOutputMappingResult LastOutput;
-double StartTime = 0;
+double OutputMappingStartTime = 0;
 bool bOpenAssetOnSuccess = false;
 
-bool SaveJson(const FString& Filename, const TSharedRef<FJsonObject>& Object)
+bool SaveOutputMappingJson(const FString& Filename, const TSharedRef<FJsonObject>& Object)
 {
 	FString Text;
 	return FJsonSerializer::Serialize(Object, TJsonWriterFactory<>::Create(&Text))
@@ -48,7 +48,7 @@ void RecordOutcome()
 	Record->SetStringField(TEXT("asset_path"), LastOutput.AssetPath);
 	Record->SetStringField(TEXT("error"), LastOutput.Error);
 	Record->SetNumberField(TEXT("sample_count"), LastOutput.SampleCount);
-	if (!SaveJson(LastOutput.OutputDirectory / TEXT("asset_result.json"), Record))
+	if (!SaveOutputMappingJson(LastOutput.OutputDirectory / TEXT("asset_result.json"), Record))
 		UE_LOG(LogMotionInbetweeningHello, Warning, TEXT("Could not write output import receipt: %s"), *LastOutput.OutputDirectory);
 }
 
@@ -57,7 +57,7 @@ bool TickOutputMapping(float)
 	if (!OutputProcess.IsValid()) return false;
 	if (FPlatformProcess::IsProcRunning(OutputProcess))
 	{
-		if (FPlatformTime::Seconds() - StartTime < 120) return true;
+		if (FPlatformTime::Seconds() - OutputMappingStartTime < 120) return true;
 		FPlatformProcess::TerminateProc(OutputProcess, true);
 		LastOutput.Error = TEXT("Output conversion timed out after 120 seconds.");
 	}
@@ -175,13 +175,13 @@ bool StartMannyOutputMapping(const FString& SourceFile, const FOutputMappingOpti
 	Job->SetStringField(TEXT("output_directory"), OutDirectory);
 	Job->SetStringField(TEXT("statistics_file"), Options.StatisticsFile);
 	const FString JobFile = OutDirectory / TEXT("job.json");
-	if (!SaveJson(JobFile, Job)) return FailStart(TEXT("Cannot write the output job settings."));
+	if (!SaveOutputMappingJson(JobFile, Job)) return FailStart(TEXT("Cannot write the output job settings."));
 	const FString Arguments = FString::Printf(TEXT("\"%s\" --job \"%s\""), *Worker, *JobFile);
 	OutputProcess = FPlatformProcess::CreateProc(*Options.PythonExecutable, *Arguments,
 		false, true, true, nullptr, 0, *FPaths::ProjectDir(), nullptr);
 	if (!OutputProcess.IsValid()) return FailStart(TEXT("Cannot start the configured Python executable."));
 	bOpenAssetOnSuccess = Options.bOpenAsset;
-	StartTime = FPlatformTime::Seconds();
+	OutputMappingStartTime = FPlatformTime::Seconds();
 	OutputTicker = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateStatic(&TickOutputMapping), 0.1f);
 	UE_LOG(LogMotionInbetweeningHello, Display, TEXT("Manny output import started: %s | %s"), *SourceFile, *OutDirectory);
 	return true;

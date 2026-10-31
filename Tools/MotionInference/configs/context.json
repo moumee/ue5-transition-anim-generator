@@ -1,0 +1,32 @@
+{
+  "model": {
+    "d_mask": 1,
+    "constrained_slices": [
+      [
+        null,
+        null
+      ]
+    ],
+    "n_layer": 6,
+    "n_head": 8,
+    "d_model": 512,
+    "d_head": 64,
+    "d_pff_inner": 512,
+    "d_encoder_in": 136,
+    "d_encoder_h": 512,
+    "d_decoder_h": 512,
+    "d_out": 135,
+    "dropout": 0.0,
+    "pre_lnorm": true,
+    "atten_bias": false,
+    "max_seq_len": 65
+  },
+  "indices": {
+    "r_start_idx": 0,
+    "r_end_idx": 132,
+    "p_start_idx": 132,
+    "p_end_idx": 135,
+    "c_start_idx": 135,
+    "c_end_idx": 139
+  }
+}

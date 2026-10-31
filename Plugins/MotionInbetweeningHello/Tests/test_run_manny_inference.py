@@ -54,6 +54,13 @@ class InferenceBridgeTests(unittest.TestCase):
             run(self.job)
         self.assertIn('Intentional test failure', (self.directory / 'model_stderr.log').read_text(encoding='utf-8'))
 
+    def test_adapter_failure_cause_is_visible_in_receipt_error(self):
+        backend=self.directory/'failure backend.py'
+        backend.write_text("import sys\nprint('Inference failed: transition_frames must be an integer in [5, 45].',file=sys.stderr)\nsys.exit(1)\n",encoding='utf-8')
+        self.job['inference_script']=str(backend)
+        with self.assertRaisesRegex(ValueError, r'transition_frames.*\[5, 45\]'):
+            run(self.job)
+
     def test_success_without_output_is_rejected(self):
         save_json(self.config, {'test_mode': 'missing_output'})
         with self.assertRaisesRegex(ValueError, 'without writing'):

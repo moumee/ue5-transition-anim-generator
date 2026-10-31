@@ -86,7 +86,15 @@ def run(job):
         completed = subprocess.run(command, cwd=str(Path(job['inference_script']).resolve().parent),
                                    stdout=stdout, stderr=stderr, check=False)
     if completed.returncode != 0:
-        raise ValueError(f'Inference exited with code {completed.returncode}. See model_stderr.log and model_stdout.log.')
+        # Surface the adapter's concise cause in the UE failure notification.
+        # Keep the complete backend logs in the job directory.
+        with (directory / 'model_stderr.log').open('rb') as stream:
+            stream.seek(0, 2)
+            stream.seek(max(0, stream.tell() - 4096))
+            lines = stream.read().decode('utf-8', errors='replace').splitlines()
+        cause = next((line.strip() for line in reversed(lines) if line.startswith('Inference failed:')), '')
+        cause = ''.join(c for c in cause if c.isprintable())[:600]
+        raise ValueError(f'Inference exited with code {completed.returncode}. {cause} See model_stderr.log and model_stdout.log.')
     output = Path(request['output_file'])
     if not output.is_file():
         raise ValueError('Inference exited successfully without writing model_output.json.')

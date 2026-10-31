@@ -1,11 +1,13 @@
 # MotionInbetweeningHello
 
-UE 5.8 Editor 플러그인. **Manny 입력 내보내기**, **외부 추론 실행과 결과 에셋 저장**, **출력 JSON 직접 가져오기**, 기존 테스트 애니메이션 생성을 제공합니다. 외부 추론 호출기는 준비했으며 실제 모델 진입점과 실행 샘플은 팀 전달 대기입니다.
+UE 5.8 Editor 플러그인. **Manny 입력 내보내기**, **외부 추론 실행과 결과 에셋 저장**, **출력 JSON 직접 가져오기**, 기존 테스트 애니메이션 생성을 제공합니다. 공식 Context + Detail 모델의 CPU 진입점과 Walk·Run 입력 샘플은 [Tools/MotionInference](../../Tools/MotionInference/README.md)에 있습니다. 모델 파일과 실행 환경을 먼저 준비합니다.
+
+처음 받은 PC에서는 [저장소 설치·데모·생성 안내](../../README.md)를 먼저 따릅니다.
 
 ## Manny 모델 입력 내보내기
 
 1. `transition_generator.uproject`를 UE 5.8로 엽니다. 이미 열려 있었다면 새 빌드가 로드되도록 다시 엽니다.
-2. **Tools → Motion In-betweening Settings**에서 Python 실행 파일과 모델의 학습 통계 파일을 지정합니다. 현재 PC에는 기존 `mib` 환경과 공식 Context 모델의 `train_stats_context.pkl`을 설정해 두었습니다.
+2. **Tools → Motion In-betweening Settings**에서 Python 실행 파일과 모델의 학습 통계 파일을 지정합니다. 각 PC의 Python을 지정합니다. 첫 실행은 Training Statistics를 비워 raw 입력으로 시작할 수 있으며, 정규화 입력은 공식 Context 모델의 `train_stats_context.pkl`을 지정합니다.
 3. Content Browser에서 Manny Skeleton의 **Animation Sequence 하나**를 선택합니다. 확인한 예제는 `Content/ControlRig/Characters/Mannequins/Animations/Manny/MM_Walk_Fwd`입니다.
 4. **Tools → Export Selected Manny Model Input**을 실행합니다.
 5. 성공하면 결과 폴더가 열립니다. `model_input.json`이 정렬·전처리된 모델 입력입니다.
@@ -30,7 +32,7 @@ Python은 **3.11 이상 + NumPy**가 필요합니다. 팀원 의존성은 프로
 
 ## 시작·도착 입력으로 전환 생성
 
-팀에서 [추론 연결 제안](../../Tools/MotionInference/README.md)에 맞는 실행 코드를 받으면 다음 순서로 사용합니다.
+[실제 모델 준비와 처리 규약](../../Tools/MotionInference/README.md)에 따라 `infer.py`와 개인 모델 설정을 준비한 뒤 다음 순서로 사용합니다. 현재 어댑터는 5~45 전환 샘플을 지원합니다. 정규화한 옛 입력에 투영 전 발가락 회전이 없으면 새 플러그인으로 다시 내보냅니다. `MM_Run_Fwd`는 입력 검사의 `Max Root Step Cm`을 20 이상으로 설정해야 합니다.
 
 1. 시작·도착 Manny 애니메이션을 각각 위 메뉴로 내보내 `model_input.json` 두 개를 준비합니다. 같은 모델 통계 설정을 사용합니다.
 2. **Tools → Motion In-betweening Settings**에서 `Inference Script`, `Model Config`를 지정합니다. 모델용 Python 환경이 다르면 `Inference Python`도 지정합니다. 비우면 기존 `Python Executable`을 사용합니다.
@@ -114,7 +116,7 @@ JSON은 아래 조건을 사용합니다. 이는 플러그인 연결 계약이�
 | `Private/Tests/MotionInbetweeningAnimationTests.cpp` | 잘못된 입력 거부와 저장된 에셋 재로딩·재생 데이터 검사 |
 | `Private/Tests/MotionInbetweeningMappingTests.cpp` | 실제 Manny 입력 추출·변환과 잘못된 설정·중복 실행 거부 검사 |
 
-기존 테스트 메뉴는 그대로 두고, 출력 메뉴에서 **팀 역매핑 → 검증된 FAnimationSamples → CreateAndSaveAnimation**을 호출합니다. `Private/MotionInbetweeningInference.*`와 `Scripts/run_manny_inference.py`는 외부 추론과 이 출력 경로를 연결합니다. 실제 모델 진입점 수신·재현과 전환 구간 선택 UI는 후속 대상입니다.
+기존 테스트 메뉴는 그대로 두고, 출력 메뉴에서 **팀 역매핑 → 검증된 FAnimationSamples → CreateAndSaveAnimation**을 호출합니다. `Private/MotionInbetweeningInference.*`와 `Scripts/run_manny_inference.py`는 외부 추론과 이 출력 경로를 연결합니다. `Tools/MotionInference/infer.py`가 공식 모델 추론을 수행하며, 애니메이션 임의 시간 구간 선택 UI는 후속 대상입니다.
 
 현재 내부 입력 가정은 Unreal 좌표계의 **부모 기준 local 절대 transform**, 위치 **cm**, 회전 **정규화한 quaternion (X,Y,Z,W)**, 양수 스케일입니다. delta/global 포즈를 직접 넣으면 안 됩니다. 이는 데모 가정이며 팀의 합의된 전달 규격이 아닙니다. 전달하지 않은 본은 Skeleton의 reference pose를 사용합니다.
 
@@ -133,10 +135,11 @@ JSON은 아래 조건을 사용합니다. 이는 플러그인 연결 계약이�
 
 ## 빌드
 
-에디터를 닫고 PowerShell에서 실행합니다.
+에디터를 닫고 저장소 루트의 PowerShell에서 실행합니다.
 
 ```powershell
-& 'C:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat' transition_generatorEditor Win64 Development 'C:\Users\young\prg\UnrealEngine\ue5-transition-anim-generator\transition_generator.uproject' -WaitMutex -NoHotReloadFromIDE
+$projectFile = (Resolve-Path '.\transition_generator.uproject').Path
+& 'C:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat' transition_generatorEditor Win64 Development $projectFile -WaitMutex -NoHotReloadFromIDE
 ```
 
 ## 자동화 검증
@@ -146,20 +149,24 @@ JSON은 아래 조건을 사용합니다. 이는 플러그인 연결 계약이�
 `MotionInbetweening.MannyInputMapping`은 설정한 Python으로 실제 `MM_Walk_Fwd`를 내보내고 31×135 유한값·30fps·context 10·정규화 여부를 검사합니다. Python 설정이 필요하며 결과는 일반 내보내기와 같은 `Saved` 경로에 남습니다. 이 검사는 새 메뉴와 같은 C++ 실행 경로를 사용합니다.
 
 ```powershell
-& 'C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe' 'C:\Users\young\prg\UnrealEngine\ue5-transition-anim-generator\transition_generator.uproject' -Unattended -NoSplash -NoSound -NullRHI '-ExecCmds=Automation RunTests MotionInbetweening.' '-TestExit=Automation Test Queue Empty' '-ReportExportPath=C:\Users\young\prg\UnrealEngine\ue5-transition-anim-generator\Saved\Automation\MotionInbetweening' '-AbsLog=C:\Users\young\prg\UnrealEngine\ue5-transition-anim-generator\Saved\Logs\MotionInbetweening-Verify.log'
+$projectFile = (Resolve-Path '.\transition_generator.uproject').Path
+$reportPath = Join-Path (Get-Location) 'Saved/Automation/MotionInbetweening'
+$logPath = Join-Path (Get-Location) 'Saved/Logs/MotionInbetweening-Verify.log'
+& 'C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe' $projectFile -Unattended -NoSplash -NoSound -NullRHI '-ExecCmds=Automation RunTests MotionInbetweening.' '-TestExit=Automation Test Queue Empty' "-ReportExportPath=$reportPath" "-AbsLog=$logPath"
 ```
 
 저장 검사는 Skeleton/preview mesh, 30fps·60구간·61키·2초, 모든 입력 키, 루프 양 끝, 압축 데이터로 평가한 팔 움직임을 확인합니다. UI 재생 검증은 별도로 수행합니다. `Binaries`, `Intermediate`, `Saved`는 기존 `.gitignore`로 제외합니다.
 
 2026-09-30 검증: Editor 빌드 성공, 위 Unreal 자동화 3개 성공(경고·실패 0), 기존 저장 애니메이션 5개 검사, 팀원 단위 테스트 10개 성공. 별도로 정규화 사용·미사용과 잘못된 샘플 시간 처리 3건을 확인했습니다. 새 메뉴 클릭·폴더 열기와 시각적인 모션 품질은 이번 자동화 검사 범위에 포함하지 않았습니다.
 
-작업 기록: `C:/Users/young/prg/School/게임 공학/지식/20_Manny입력매핑_플러그인연결_2026-09-30.md`. 기존 애니메이션 생성 기록은 같은 폴더의 `09_Manny테스트애니메이션_구현검증_2026-09-14.md`에 있습니다.
 
 ## 출력 기능 자동화 검사
 
 추론 호출 검사는 프로젝트 루트에서 Python으로 `-X utf8 -B -m unittest discover -s Plugins/MotionInbetweeningHello/Tests -p "test_*.py" -v`를 실행합니다. 공백·한글 경로의 실제 자식 프로세스, 입력·요청 ID·출력 길이·정규화 통계·heading 검증, 오류 로그 보존을 포함합니다.
 
 `MotionInbetweening.MannyInference`는 시험용 실행기로 호출→출력 변환→에셋 저장, 중복 실행 방지, 실패 상태 초기화, 자식 프로세스를 포함한 취소·시간 초과를 검사합니다. 실제 모델을 실행하거나 모션 품질을 평가하지 않습니다. 성공한 에셋은 아래 새 프로세스 재로딩 검사에도 포함됩니다.
+
+`MotionInbetweeningOptional.RealModel`은 별도로 선택해 실행하는 실제 모델 통합 검사입니다. `-MIBInferencePython=<Python 절대 경로>`와 `-MIBModelConfig=<모델 설정 절대 경로>`를 함께 전달해야 하며, 누락하면 실패합니다. 공식 Context + Detail의 Walk→Run 출력이 호출기·역매핑을 거쳐 31키·89본 에셋으로 저장되는지 확인합니다. 전체 `MotionInbetweening.` 검사에 자동 포함되지 않으며 시각 품질을 승인하지 않습니다.
 
 `MotionInbetweening.MannyOutputMapping`은 실제 Context 출력 fixture를 두 번 가져와 별도 에셋 저장, 89본·31샘플·30fps·1초, 모든 local 키와 재생 값을 검사합니다. 정규화한 quaternion의 상대 회전으로 오차를 계산합니다. raw 재생 기준은 위치 0.001cm·회전 0.001도이고, 기본 ACL 압축의 정밀도를 참고한 압축 재생 기준은 위치 0.01cm·회전 0.2도입니다.
 
@@ -168,13 +175,13 @@ Windows에서는 성공한 가져오기 뒤에 실제 JSON 파일을 실행 파�
 Python 입력 검증 회귀 검사는 프로젝트 루트에서 설정한 Python으로 실행합니다. NumPy 외에 새 패키지는 필요하지 않으며, 팀 매핑이나 모델을 실행하지 않습니다.
 
 ```powershell
-& 'C:\Users\young\miniconda3\envs\mib\python.exe' -B 'Plugins/MotionInbetweeningHello/Tests/test_prepare_manny_output.py' -v
+& '.\.venv\Scripts\python.exe' -B 'Plugins/MotionInbetweeningHello/Tests/test_prepare_manny_output.py' -v
 ```
 
 관절 순서·단위/공간·계층, 선언 count/shape, 중복 키, 숫자 배열의 문자열·bool·null 거부와 중첩·평탄 heading 동시 검사를 수행합니다. 기존 최소 출력·정상 메타데이터·정수와 실수 혼합·UTF-8 BOM 호환성도 검사합니다. 다른 PC에서는 위 Python 경로를 해당 환경으로 바꿉니다.
 
 그다음 새 에디터 프로세스에서 `MotionInbetweeningReload.OutputAssets`를 실행하면 성공한 출력 작업의 저장 에셋을 다시 불러와 같은 검사를 합니다. 의도적으로 생성 에셋을 편집했다면 원래 변환 결과와 달라져 재로딩 검사가 실패할 수 있습니다.
 
-파일 선택 창·메뉴 클릭·미리보기 자동 열기와 모션의 시각적인 자연스러움은 자동화 검사의 범위 밖입니다. 이번 작업의 빌드·실행·오류 기록은 `C:/Users/young/prg/School/게임 공학/구현/2026-10-05_Manny출력연결`에 보관합니다.
+파일 선택 창·메뉴 클릭·미리보기 자동 열기와 모션의 시각적인 자연스러움은 자동화 검사의 범위 밖입니다. 자신의 실행 기록은 프로젝트의 `Saved` 작업 폴더에서 확인합니다.
 
 2026-10-05 검증: UE 5.8.3 최종 빌드 성공, 기존 3개 검사·출력 가져오기·새 프로세스 재로딩 통과, Python 어댑터 13건 통과. 같은 Context 출력으로 생성한 6개 에셋을 재로딩했습니다. 압축 재생 최대 오차는 약 0.003616cm·0.117106도이며 원본 키는 변환 결과와 일치합니다. 초기 빌드 및 압축 검사 기준의 실패·수정 기록도 보존했습니다. 모델 추론 호출은 아직 연결하지 않았습니다.

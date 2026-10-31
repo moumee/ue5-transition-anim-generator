@@ -1,0 +1,33 @@
+{
+  "purpose": "Numerical drift baseline, not visual-quality approval",
+  "pipeline": "context_detail",
+  "target_placement": "endpoint_velocity",
+  "transition_frames": 20,
+  "model_files_sha256": {
+    "context_checkpoint": "6442ffc92ceaff3c3003569885d599abcf4a5b1e2365ddde96c99b338692c9da",
+    "context_statistics": "d11272e7b625f7175f358878aeb182c68ab89c26637288f8a83d33aadd0a5949",
+    "detail_checkpoint": "810c43420e93d3d02cbcd3ae7c733bad9b89e5150e2a9b3735be3c969f49e49a",
+    "detail_statistics": "b165bfddabaed759e7d09d14f5142c4396ff4f22a6d32801641a0998d782b665"
+  },
+  "input_sha256": [
+    "7a41f135e0f6ea92140afbcf065552648d0c755ebabd057851fd8060c3466411",
+    "7983ad999fabc02fb32785c43fa98870e434f212cbb0b398363693de47c72200"
+  ],
+  "source": {
+    "model_source_commit": "3d2ba85e4678a5043d61b0be99763b086afa9dc4",
+    "vendor_manifest_sha256": "fc8f207fc3211e8747be7d38be0f8e22ba0e27764f84d8d4aaa580a13266a033",
+    "adapter_sha256": "f86fdb9ee0c7cae1d92c1f91705f7f13757ded425eb7fdf346dc47082fbe5364",
+    "architecture_sha256": {
+      "context": "a12279a65cb668429053c182f77dcfc406c12cf48efa614902e52f22db121289",
+      "detail": "adddc1f9acb823fc157814f43c6d1f6425806f3b40a4f9ade7e71775b0b62b0d"
+    },
+    "model_manifest_sha256": "acf6153923791400b8b9738fc77c71918595cde0e22fb0b72a149ff4bfb811bf",
+    "mapping_sha256": {
+      "official_context_preprocess.py": "2718df7ee5a4131e30f5c80c73af174b6f0fc06306d49d59da71921794bb7491",
+      "manny_lafan_transform.py": "29976f8df702e936eae33e0993a57e581c8ab29fa07d0a249131913eb81402c6"
+    }
+  },
+  "torch": "2.11.0+cu128",
+  "numpy": "1.26.4",
+  "atol": 2e-05
+}

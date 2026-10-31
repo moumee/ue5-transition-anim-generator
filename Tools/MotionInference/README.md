@@ -1,94 +1,69 @@
-# 플러그인 추론 연결 제안 v1
+# Manny 실제 모델 추론
 
-2026-10-08 이영호 측 호출기 구현에 맞춘 **협의용 규격**입니다. 서준영의 기존 추론 구현을 확인해 조정하며, 팀 전체가 합의한 최종 사양이나 실제 모델 연결 완료를 뜻하지 않습니다. 모델 코드는 아직 이 경로에 수신되지 않았습니다.
+`infer.py`는 플러그인의 `motion_inbetweening.inference_request.v1` 요청을 받아 공식 Context + Detail 가중치로 전환 구간을 생성합니다. Context 단독 경로도 지원합니다. 새 학습·데이터셋·Visdom 서버 없이 CPU에서 동기 실행하며, 오류는 stderr와 0이 아닌 종료 코드로 반환합니다.
 
-## 전달할 위치와 내용
+## 준비
 
-호출기는 현재 [codex/plugin-inference-runner 브랜치](https://github.com/moumee/ue5-transition-anim-generator/tree/codex/plugin-inference-runner)에 공유했습니다. **개발 중인 연결 작업이며 main에는 반영하지 않았습니다.** 실제 모델 코드·샘플을 받아 연결을 확인할 예정입니다.
-
-기존 저장소에서 아래 명령으로 호출기 브랜치를 가져와 별도 기능 브랜치에서 작업할 수 있습니다. `feature/model-inference-entry`는 예시 이름이며 기존 작업이 있으면 새 이름을 사용합니다.
-
-```bash
-git fetch origin
-git switch -c feature/model-inference-entry origin/codex/plugin-inference-runner
-```
-
-새로 받는 경우에는 [저장소](https://github.com/moumee/ue5-transition-anim-generator)를 clone할 때 `--branch codex/plugin-inference-runner`를 지정하면 됩니다. 로컬 수정이 있으면 그 작업을 보존한 뒤 브랜치를 전환합니다.
-
-추론 코드는 `Tools/MotionInference/`에 작업하고, 연결용 PR의 **base는 `codex/plugin-inference-runner`**로 지정해 전달하는 방식을 제안합니다. 실제 모델 연결·검증을 마치기 전에는 main에 병합하지 않습니다.
-
-- `infer.py`: 기존 추론 함수를 호출하는 진입점. 아래 `--request` JSON을 읽고 지정한 파일에 결과를 씁니다. 기존 CLI가 있으면 먼저 실행법과 샘플을 공유해도 됩니다.
-- `requirements.txt`와 실행 안내: 확인한 Python·PyTorch·CUDA 버전, CPU/GPU 지원, 환경 준비 및 재현 명령.
-- 모델 설정 예제: 체크포인트·통계 파일을 지정하는 JSON. 설정 키는 모델 담당자가 정의하며 상대 경로는 **설정 파일의 폴더 기준**으로 해석합니다.
-- 재현 샘플: 실제 시작/도착 `model_input.json`, 실행에 사용한 요청·설정, 생략 없는 출력 JSON 1세트와 사용 코드 커밋. 출력의 `inference_request_id`는 해당 요청과 일치해야 합니다.
-- 대용량 가중치·통계: 공유 위치와 SHA-256, 대응 모델/버전. 대용량 파일을 Git에 직접 추가하는 것을 요구하지 않습니다.
-
-Unreal의 입력 내보내기, 외부 프로세스 실행·취소·시간 제한, 출력 검증·역매핑·에셋 저장은 플러그인에서 담당합니다. `Tests/Fixtures/inference_fixture_backend.py`는 저장된 포즈를 반복하는 **호출 시험 전용**이며 실제 추론 구현의 예제가 아닙니다.
-
-## 호출
+Python 3.11 환경에서 이 폴더의 `requirements.txt`를 설치합니다.
 
 ```text
-<inference-python> -X utf8 -B <infer.py> --request <request.json>
+python -m pip install -r requirements.txt
 ```
 
-각 경로는 별도 인수로 전달하며 셸을 거치지 않습니다. cwd는 `infer.py`의 폴더입니다. 요청 안의 파일 경로는 절대 경로이며 공백·한글을 포함할 수 있습니다. 입력은 읽기 전용으로 취급하고, `output_file`에 UTF-8 JSON을 완성한 뒤 종료 코드 0으로 끝냅니다. 실패하면 stderr에 원인을 쓰고 0이 아닌 코드로 종료합니다. 플러그인은 stdout/stderr를 작업 폴더에 보관합니다. 별도 분리 프로세스/서버를 띄우지 않는 동기 실행을 전제로 합니다.
+공식 [사전 학습 파일](https://github.com/victorqin/motion_inbetweening/releases/download/v1.0.0/pre-treained.zip)을 받아 다음 파일을 준비합니다. 기본 예제는 이 폴더의 `models/` 아래에 각 모델 폴더를 둡니다. 다른 위치를 사용할 때는 설정 경로를 바꿀 수 있습니다.
 
-## request.json
+- `lafan1_context_model_release/checkpoint_lafan1_context_model_release.pth`
+- `lafan1_context_model_release/train_stats_context.pkl`
+- `lafan1_detail_model_release/checkpoint_lafan1_detail_model_release.pth`
+- `lafan1_detail_model_release/train_stats_detail.pkl`
 
-기본 전환 길이 20샘플과 31샘플짜리 입력 파일을 사용한 예시입니다. 경로·ID·해시는 설명용이며 실제 실행 때 플러그인이 채웁니다.
+`model_config.example.json`을 `model_config.local.json`으로 복사하고 경로를 지정합니다. 상대 경로는 **설정 파일의 폴더 기준**입니다. 진입점은 `model_manifest.json`의 파일 SHA-256과 대조한 뒤 가중치·통계를 읽고, 모델 형상은 strict 모드로 확인합니다. 가중치·개인 설정은 Git에 포함하지 않습니다. 공식 모델과 다른 후보는 설정의 경로만 바꿔 암묵적으로 수용하지 않으며 별도 버전·통계·검증이 필요합니다.
 
-```json
-{
-  "schema": "motion_inbetweening.inference_request.v1",
-  "request_id": "unique-job-id",
-  "start_input_file": "C:/job/start_input.json",
-  "end_input_file": "C:/job/end_input.json",
-  "output_file": "C:/job/model_output.json",
-  "model_config_file": "C:/models/config.json",
-  "sample_rate_hz": 30,
-  "context_frames": 10,
-  "start_context_start_index": 21,
-  "end_target_index": 0,
-  "transition_frames": 20,
-  "expected_output_samples": 31,
-  "source_sha256": {"start": "<sha256>", "end": "<sha256>"}
-}
+추론 함수와 모델 클래스는 `vendor/`에 원본 그대로 보관했습니다. 팀 소스 `3d2ba85e4678a5043d61b0be99763b086afa9dc4`, 상류 `fa9b6dc5f0791fd28bfccb6783e6bfd26d578515`를 기준으로 하며 변경은 학습/손실 경로에 한정되고 이 버전의 추론 함수는 상류와 같습니다. 원본 MIT 고지와 파일 해시는 `vendor/LICENSE.txt`, `vendor/source_manifest.json`에 있습니다. 학습용 Config·통계 생성·체크포인트 로더는 호출하지 않습니다.
+
+## Unreal에서 사용
+
+1. 플러그인 설정의 외부 Python을 준비한 환경으로 지정합니다. Training Statistics를 사용할 경우 위 Context 통계를 지정합니다.
+2. 시작·도착 Manny 애니메이션을 각각 입력 내보내기 메뉴로 내보냅니다. 도착 목표의 다음 프레임까지 필요합니다.
+3. 모델 Python, Inference Script(`infer.py`), Model Config(`model_config.local.json`)를 설정합니다.
+4. `Tools → Generate Manny Transition from Model Inputs`에서 START와 DESTINATION의 `model_input.json`을 순서대로 선택합니다.
+5. `Saved/MotionInbetweening/Inference/<ID>/pipeline_result.json`의 `success=true`, `stage=completed`, `asset_path`를 확인하고 생성 에셋을 재생합니다. Python 출력 파일만으로 에셋 저장 성공을 판정하지 않습니다.
+
+기본 Manny의 `MM_Run_Fwd`는 30Hz에서 루트가 샘플당 최대 약 17.98cm 이동합니다. 이 클립을 내보낼 때는 입력 검사 설정의 `Max Root Step Cm`을 20 이상으로 지정합니다. 기본값 15cm에서 거부되는 이유는 측정된 이동량이 제한을 넘기 때문이며, 이 제한을 바꾸는 것이 생성 모션의 품질을 보장하지는 않습니다.
+
+이 어댑터의 전환 길이는 **5~45샘플**입니다. 이는 구현의 지원 정책이며 설정의 `max_seq_len=65`가 강제하는 한계가 아닙니다. 호출기 자체의 1~240 범위와 구분합니다. 생성 품질은 동작·목표 배치에 따라 달라지므로 저장 성공과 별도로 방향·경계·발 미끄러짐을 확인해야 합니다.
+
+## CLI와 샘플
+
+```text
+python -X utf8 -B infer.py --request <request.json 절대경로>
 ```
 
-시작/도착 파일은 플러그인의 `motion_inbetweening.manny_input.v1` 형식입니다. `vectors_tx135`는 22관절의 부모 기준 rotation6D 132값 + Hips XYZ 3값입니다. joint 순서·parents·6D 배열 규칙과 cm 단위는 `Tools/MannyLafanMapping`의 기존 변환을 따릅니다. 정규화된 수치 자체에는 cm 단위를 직접 적용하지 않습니다. 입력마다 `normalization_applied`, `alignment`, `joint_order`, `parents`, `sample_count`, `sample_rate_hz`, `context_len`이 있습니다.
+요청 필드는 `schema`, `request_id`, `start_input_file`, `end_input_file`, `output_file`, `model_config_file`, `sample_rate_hz=30`, `context_frames=10`, `start_context_start_index`, `end_target_index`, `transition_frames`, `expected_output_samples`, `source_sha256`입니다. 파일 경로는 절대 경로이며 한글·공백을 지원합니다. 플러그인이 입력 사본과 요청을 만듭니다. 기존 출력 파일은 덮어쓰지 않습니다.
 
-| 구간 | 선택과 출력 인덱스 |
-| --- | --- |
-| 시작 문맥 | 시작 입력의 마지막 10샘플. 출력 `[0..9]` |
-| 생성 구간 | 마지막 문맥과 도착 목표 **사이**의 N샘플. 출력 `[10..9+N]` |
-| 도착 목표 | 도착 입력의 첫 샘플. 출력 `[10+N]` |
-| 총 길이 | `10 + N + 1`. N=20이면 31샘플·30fps·1초 |
+`samples/start_input.json`과 `samples/end_input.json`은 실제 Manny Walk·Run에서 내보낸 생략 없는 비정규화 입력입니다. `run_sample.py --config <개인 설정> --output-dir <새 폴더>`는 이 입력의 해시와 절대 경로를 넣은 요청을 생성하고 같은 CLI를 실행합니다. 자동으로 Unreal 에셋을 생성하지는 않습니다.
 
-현재 UI는 내보낸 두 파일을 선택합니다. 원본 애니메이션의 임의 시간 구간 선택·목표 이동 거리/회전 조정 UI는 없습니다. 입력 내보내기는 기본적으로 원본 시작부터 최대 31샘플을 사용합니다. 따라서 ‘시작의 마지막 10샘플’은 **내보낸 구간** 기준입니다. 모델별 N 지원 범위가 다르면 모델 담당자가 지원 길이를 알려 주고 지원하지 않는 요청을 오류로 처리해야 합니다. 호출기 범위는 1~240이며 모델이 모두 지원한다는 뜻이 아닙니다.
+## 처리 규약
 
-## 좌표계·정규화와 출력
+- 외부 결과는 문맥 10 + 생성 N + 도착 목표 1입니다. 내부에는 도착 목표 다음 프레임을 추가해 `10+N+2`를 만들고 후처리 후 마지막 보조 프레임을 제외합니다. 목표를 복제해 속도를 꾸미지 않습니다.
+- 각각 정렬된 두 입력을 시작 입력 좌표계로 맞춥니다. 선택한 10개 문맥의 마지막 프레임으로 모델 좌표계를 다시 정렬하고, 출력은 시작 입력 좌표계로 되돌립니다. 시작 `alignment`는 원문 그대로 반환합니다.
+- `target_placement=endpoint_velocity`가 기본입니다. 도착 heading을 마지막 문맥에 맞춘 뒤, 시작 문맥의 마지막 3개 수평 이동량 평균과 도착 목표→다음의 실제 수평 이동량을 평균해 N+1 구간의 목표 거리를 정합니다. 도착 클립의 목표→다음 변화는 보존합니다. 방향이나 속도가 다른 두 클립의 목표를 자동 배치하는 정책이며 in-place 클립에 임의 보행 속도를 만들지는 않습니다.
+- 이 기본 정책에서는 모델 후처리 뒤 생성 구간의 수평 위치에 양 끝 잔차를 선형 보간해 더합니다. 첫 생성 이동량은 마지막 문맥 이동량, 마지막 생성→목표 이동량은 목표→다음 이동량과 일치합니다. 알려진 포즈·수직 위치·모델 회전은 유지합니다. 출력의 `horizontal_boundary_correction`에 실제 보정량을 남깁니다. 발 접촉을 고정하는 IK나 품질 보장 기능은 아닙니다.
+- `continue_context`는 이전 정책입니다. 시작 문맥의 마지막 3개 수평 이동량 평균만 N+1 구간 연장합니다. 서로 다른 속도의 Walk→Run 등에서는 중간 감속과 끝 이동량 급증이 생길 수 있습니다. 기존 결과를 재현하려고 명시한 설정은 자동으로 새 정책으로 바꾸지 않습니다.
+- `preserve_exported`는 두 입력의 정렬을 복원한 원래 배치를 유지합니다. 서로 다른 원점에서 만들어진 이동형 클립에는 되돌아가는 목표를 만들 수 있으므로 배치를 확인해야 합니다. 실제 사용 정책은 출력 메타데이터에 기록됩니다.
+- 정규화 입력은 지정 Context 통계 해시로 검증·역정규화합니다. 물리 좌표에서 변환·정적 채널 투영을 한 후 기존 `evaluate`가 모델별 정규화·역정규화를 수행합니다. 출력은 항상 `normalization_applied=false`입니다.
+- LAFAN 통계에서 정적인 발가락 12채널은 모델 입력에서 평균값으로 투영합니다. 새 내보내기는 `unprojected_static_rotations`에 투영 전 회전을 함께 보존합니다. 결과의 비생성 프레임은 원래 포즈를 보존하고, 생성 구간의 해당 관절은 원래 양 끝 회전 사이를 SLERP합니다. 모델이 발가락 동작을 학습했다고 주장하지 않습니다.
+- 정규화된 옛 입력에 투영 전 회전이 없으면 재내보내기를 요청하고 실패합니다. 역정규화만으로 원래 발가락 값을 복원할 수 없습니다. 비정규화 입력은 원본 회전이 남아 있어 이 추가 필드 없이 사용할 수 있습니다.
+- Detail 마스크는 키워드 인수로 전달하며 접촉 텐서는 입력과 같은 dtype/device를 사용합니다. Context와 Detail 모두 후처리를 켭니다. 접촉 확률은 생성 구간에 대해서만 기록합니다.
 
-두 입력은 각각 독립적으로 heading 정렬되어 있습니다. 도착 배열을 그대로 시작 배열 뒤에 붙일 수 없습니다. 모델 진입점에서 도착 목표를 **시작 입력의 좌표계**로 맞춰 추론하고, 결과도 그 좌표계로 내보내야 합니다. 필요하면 기존 정렬 정보를 역으로 적용해 원래 공간을 복원한 다음 시작 정렬을 적용합니다. 목표 위치·방향 정책은 실제 걷기→달리기 샘플로 함께 확인해야 합니다.
+출력에는 실제 요청·설정 스냅샷, 모델/통계/코드 해시, 환경 버전, 내부 길이, 목표 정책과 끝점 오차·경계 이동량 등의 진단값이 포함됩니다. 형상·유한값·포즈 보존 검사가 시각 품질을 대신하지는 않습니다.
 
-정규화된 입력은 같은 통계 파일·SHA-256이어야 하며 플러그인이 이를 확인합니다. 입력이 정규화되지 않았다면 모델 진입점에서 대응 통계로 정규화합니다. 좌표 변환이 필요할 때는 먼저 물리 수치로 역정규화해야 합니다. 출력의 `normalization_applied`는 **실제 출력 상태**를 나타냅니다. 이미 역정규화한 출력은 false로 쓰며 입력 값을 무조건 복사하지 않습니다.
+`alignment.reference_frame`은 원래 시작 입력을 정렬할 때의 입력 프레임 번호입니다. 출력의 문맥 시작 번호와 혼동하지 않도록 `start_context_start_index`와 `alignment_reference`를 함께 기록합니다. 속도 진단은 XZ 수평 cm/샘플, 기존 `boundary_root_steps_cm`은 3차원 이동량입니다. 큰 정규화 값은 알려진 입력의 프레임·채널·평균/표준편차와 함께 남기며 임의 임계값으로 품질 합격을 판정하지 않습니다.
 
-출력 필수 조건:
+## 검사
 
-- `inference_request_id`: 요청의 `request_id` 그대로.
-- `predictions_tx135` (또는 `output_tx135`/`vectors_tx135` 중 하나): 생략 없는 `[expected_output_samples, 135]` 유한한 JSON 숫자 배열.
-- `frame_count`: `expected_output_samples`와 같은 정수. `sample_rate_hz`: 30.
-- `position_space`: `lafan_start_centered`.
-- `alignment.position_offset_xz`와 `alignment.rotation_offset`: **시작 입력의 값을 그대로 보존**. 평탄한 `heading_position_offset_xz`/`heading_rotation_offset` 쌍도 지원합니다. `root_position_offset_lafan`은 붙이지 않습니다.
-- `normalization_applied`: bool. true이면 `statistics.sha256`도 필수이며 플러그인의 Training Statistics와 일치해야 합니다.
+```text
+python -m unittest discover -s Tests -v
+```
 
-`joint_order`와 `parents`도 함께 보존하는 것을 권장합니다. 추가 의미 선언·shape·시간 배열이 있으면 기존 [출력 검증 규칙](../../Plugins/MotionInbetweeningHello/README.md)에 맞아야 합니다. NaN/Inf, 숫자 문자열/bool/null, 중복 JSON 키, 요청 ID·길이·heading 불일치는 에셋 생성 전에 거부합니다. 구조 검증만으로 시작/도착 포즈의 의미나 모션 품질을 확인할 수 없으므로 실제 모델의 경계 포즈·방향·발 접촉은 별도 확인합니다.
-
-## 연결 확인 순서
-
-1. 위 자료를 받아 팀 코드의 독립 실행으로 샘플을 재현합니다.
-2. 플러그인 설정에서 모델 Python·infer.py·모델 설정·통계를 지정합니다.
-3. `Tools → Generate Manny Transition from Model Inputs`에서 START와 DESTINATION 입력을 순서대로 선택합니다.
-4. `Saved/MotionInbetweening/Inference/<ID>/pipeline_result.json`의 `success=true`, `stage=completed`, `asset_path`를 확인합니다. Python `result.json` 성공만으로 에셋 저장 완료를 판정하지 않습니다.
-5. 실제 걷기→달리기 에셋을 재생해 경계 연결·팔/발 방향·미끄러짐을 확인합니다.
-
-2026-10-08 현재 호출기와 시험용 실행기는 준비했으며 실제 추론 진입점·샘플은 로컬 수신 대기입니다. 이는 준영이 측의 구현 미완료를 뜻하지 않습니다.
+기본 검사는 알려진 월드 좌표로 만든 서로 다른 원점·yaw 입력의 선택 문맥/목표/다음 프레임과 생성 역변환을 세 배치 정책에서 독립 기대값과 비교합니다. 경계 수평 이동량·회전·발가락 보간도 확인합니다. 공식 가중치 통합 검사는 `MIB_MODEL_CONFIG` 환경 변수에 준비한 설정의 절대 경로를 지정해 실행합니다. 가중치가 없으면 해당 검사는 명시적으로 skipped이며 통과로 세지 않습니다. 모델 검사는 지원 길이, 서로 다른 목표, 정규화 동등성, 원본 발가락 보존, 잘못된 통계와 옛 입력 거부를 포함합니다. 기본 Context + Detail 경로의 수치 기준선은 버전 변화 탐지용이며 품질 승인을 뜻하지 않습니다. 기존 플러그인 Python·UE 자동화와 실제 에셋 저장·재로딩은 별도로 실행합니다.
