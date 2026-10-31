@@ -4,7 +4,7 @@ Unreal Engine 5.8 에디터에서 두 Manny 동작 사이를 공식 Context + De
 
 ## 저장소 가져오기와 빌드
 
-Git LFS, Unreal Engine 5.8, Unreal C++ 빌드 도구가 필요합니다. 저장소를 받을 폴더에서 PowerShell로 실행합니다.
+Git LFS, Unreal Engine 5.8, Unreal C++ 빌드 도구가 필요합니다. 저장소를 받을 폴더에서 PowerShell로 실행합니다. 빌드용 저장소는 `C:/work`처럼 짧은 영문 경로에 두세요. 게시 전 새 빌드 검사에서 한글이 포함된 검증 경로는 MSVC C1083(PCH 파일 생성 실패)이 발생했고, 영문 경로에서는 빌드가 통과했습니다. 입력·모델 파일의 한글/공백 경로 지원과 C++ 프로젝트 빌드 경로는 별개입니다.
 
 ```powershell
 git lfs install
