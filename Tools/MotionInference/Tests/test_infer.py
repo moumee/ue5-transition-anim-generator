@@ -129,7 +129,10 @@ class ModelTests(unittest.TestCase):
             self.runtime.input(path)
 
     def test_model_configuration_hash_mismatch_is_rejected(self):
-        config=copy.deepcopy(self.runtime.config);fake=self.directory/'not_statistics.pkl';fake.write_bytes(b'not a pickle')
+        config=copy.deepcopy(self.runtime.config)
+        # The test relocates the config; retain the original resolved model paths.
+        config.update({key:str(value) for key,value in self.runtime.files.items()})
+        fake=self.directory/'not_statistics.pkl';fake.write_bytes(b'not a pickle')
         config['context_statistics']=str(fake);path=self.directory/'config.json';save_json(path,config)
         with self.assertRaisesRegex(ValueError,'SHA-256'):
             Runtime(path)
