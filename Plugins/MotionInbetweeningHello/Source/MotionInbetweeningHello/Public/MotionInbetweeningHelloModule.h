@@ -17,5 +17,6 @@ private:
 	void ExecuteGenerateAnimationCommand();
 	void ExecuteExportMannyInputCommand();
 	void ExecuteImportMannyOutputCommand();
+	void ExecuteMannyInferenceCommand();
 	void ExecuteMappingSettingsCommand();
 };

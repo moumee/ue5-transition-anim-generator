@@ -52,9 +52,18 @@ def prepare(job):
     states = pack_state(rotations, positions)
     stats_path = job.get("statistics_file", "")
     projected_channels = []
+    unprojected_static_rotations = None
     statistics = None
     if stats_path:
         mean, std = load_stats(stats_path)
+        static = (std[:132] < 1e-6).reshape(22, 6)
+        if np.any(static.any(axis=1) != static.all(axis=1)):
+            raise ValueError("Training Statistics has partially static rotation joints.")
+        static_joints = np.flatnonzero(static.all(axis=1))
+        unprojected_static_rotations = {
+            "joint_indices": static_joints.tolist(),
+            "rotations_txjx6": states[:, :132].reshape(-1, 22, 6)[:, static_joints].tolist(),
+        }
         states, channels = project_static_channels(states, mean, std)
         projected_channels = channels.tolist()
         states = normalize(states, mean, std)
@@ -82,6 +91,7 @@ def prepare(job):
         "normalization_applied": bool(stats_path),
         "statistics": statistics,
         "projected_static_channels": projected_channels,
+        "unprojected_static_rotations": unprojected_static_rotations,
         "alignment": {"reference_frame": 9, "position_offset_xz": position_offset.tolist(),
                       "rotation_offset": rotation_offset.tolist(), "yaw_radians": float(yaw)},
         "vectors_tx135": states.tolist(),

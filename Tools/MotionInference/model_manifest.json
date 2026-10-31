@@ -1,0 +1,25 @@
+{
+  "source_url": "https://github.com/victorqin/motion_inbetweening/releases/download/v1.0.0/pre-treained.zip",
+  "files": {
+    "context_checkpoint": {
+      "filename": "checkpoint_lafan1_context_model_release.pth",
+      "sha256": "6442ffc92ceaff3c3003569885d599abcf4a5b1e2365ddde96c99b338692c9da",
+      "bytes": 124773247
+    },
+    "context_statistics": {
+      "filename": "train_stats_context.pkl",
+      "sha256": "d11272e7b625f7175f358878aeb182c68ab89c26637288f8a83d33aadd0a5949",
+      "bytes": 2360
+    },
+    "detail_checkpoint": {
+      "filename": "checkpoint_lafan1_detail_model_release.pth",
+      "sha256": "810c43420e93d3d02cbcd3ae7c733bad9b89e5150e2a9b3735be3c969f49e49a",
+      "bytes": 121623412
+    },
+    "detail_statistics": {
+      "filename": "train_stats_detail.pkl",
+      "sha256": "b165bfddabaed759e7d09d14f5142c4396ff4f22a6d32801641a0998d782b665",
+      "bytes": 4614
+    }
+  }
+}

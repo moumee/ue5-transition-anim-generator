@@ -26,7 +26,7 @@ namespace
 FProcHandle WorkerProcess;
 FTSTicker::FDelegateHandle WorkerTicker;
 FMappingResult LastResult;
-double StartTime = 0;
+double InputMappingStartTime = 0;
 bool bOpenFolderOnSuccess = false;
 
 void Notify(const FString& Message, bool bSuccess)
@@ -58,7 +58,7 @@ bool TickMapping(float)
 	if (!WorkerProcess.IsValid()) return false;
 	if (FPlatformProcess::IsProcRunning(WorkerProcess))
 	{
-		if (FPlatformTime::Seconds() - StartTime < 120.0) return true;
+		if (FPlatformTime::Seconds() - InputMappingStartTime < 120.0) return true;
 		FPlatformProcess::TerminateProc(WorkerProcess, true);
 		LastResult.Error = TEXT("Mapping timed out after 120 seconds. See the job folder and verify the Python environment.");
 	}
@@ -215,7 +215,7 @@ bool StartMannyInputMapping(UAnimSequence* Animation, const FMappingOptions& Opt
 	LastResult = FMappingResult();
 	LastResult.OutputDirectory = OutDirectory;
 	bOpenFolderOnSuccess = Options.bOpenOutputFolder;
-	StartTime = FPlatformTime::Seconds();
+	InputMappingStartTime = FPlatformTime::Seconds();
 	WorkerTicker = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateStatic(&TickMapping), 0.1f);
 	UE_LOG(LogMotionInbetweeningHello, Display, TEXT("Manny input mapping started: %s | %s"), *Animation->GetPathName(), *OutDirectory);
 	Notify(TEXT("Preparing Manny model input..."), true);

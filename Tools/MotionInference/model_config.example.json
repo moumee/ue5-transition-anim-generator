@@ -1,0 +1,11 @@
+{
+  "schema": "motion_inbetweening.model_config.v1",
+  "pipeline": "context_detail",
+  "device": "cpu",
+  "cpu_threads": 4,
+  "target_placement": "endpoint_velocity",
+  "context_checkpoint": "models/lafan1_context_model_release/checkpoint_lafan1_context_model_release.pth",
+  "context_statistics": "models/lafan1_context_model_release/train_stats_context.pkl",
+  "detail_checkpoint": "models/lafan1_detail_model_release/checkpoint_lafan1_detail_model_release.pth",
+  "detail_statistics": "models/lafan1_detail_model_release/train_stats_detail.pkl"
+}

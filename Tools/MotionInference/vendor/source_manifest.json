@@ -1,0 +1,73 @@
+{
+  "repository": "https://github.com/moumee/motion_inbetweening",
+  "commit": "3d2ba85e4678a5043d61b0be99763b086afa9dc4",
+  "upstream": "https://github.com/victorqin/motion_inbetweening",
+  "upstream_commit": "fa9b6dc5f0791fd28bfccb6783e6bfd26d578515",
+  "license": "MIT",
+  "files": [
+    {
+      "path": "motion_inbetween/__init__.py",
+      "sha256": "d269e0ff1a1c1dfac762143b3679b3ba7a2bf3e3f6c2539c108adacdcec6f91e"
+    },
+    {
+      "path": "motion_inbetween/benchmark.py",
+      "sha256": "e0c60f551410f17731b15ca6caf7fac7b7873974130c8e549c2d0a32ae4614d8"
+    },
+    {
+      "path": "motion_inbetween/config.py",
+      "sha256": "546e0d910310e6f54a9efc5107ffc5d9c2e6bff5969dddd664f05a0c087f9181"
+    },
+    {
+      "path": "motion_inbetween/data/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "motion_inbetween/data/bvh.py",
+      "sha256": "6d8a249fba69d423078c72efe630077aa5114f4785064623334683a0f075991a"
+    },
+    {
+      "path": "motion_inbetween/data/loader.py",
+      "sha256": "f6cdf471928b1706ee73422d47965a9722a7cd4cb1872bed85eafe54ede586cf"
+    },
+    {
+      "path": "motion_inbetween/data/utils_np.py",
+      "sha256": "3b57fb4baa0cdbe8c5c83a53c452a816d129ea08ef81e4258b1db9231b1c3590"
+    },
+    {
+      "path": "motion_inbetween/data/utils_torch.py",
+      "sha256": "1e79b5e53d69b3c902619a938417edd7be0d0739d54d1ab2555cc978fb438e02"
+    },
+    {
+      "path": "motion_inbetween/model/__init__.py",
+      "sha256": "d56370914154c206d9c991e3ad455fbf41008d25f2c7603b5a1e14e64b7532ad"
+    },
+    {
+      "path": "motion_inbetween/model/rmi.py",
+      "sha256": "9c56a28efa025a94c1be1338fa37ed5588377e6aff745d79c3a6329fe0e3fc37"
+    },
+    {
+      "path": "motion_inbetween/model/transformer.py",
+      "sha256": "12d75526425bf13e1bacf57af2654ce66753879e65e7e25d3a327a5eb084eaca"
+    },
+    {
+      "path": "motion_inbetween/train/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "motion_inbetween/train/context_model.py",
+      "sha256": "d3893e8dc57b7b7824bf937727785ac52253ab9fe1e689471fcaf9d891da2b05"
+    },
+    {
+      "path": "motion_inbetween/train/detail_model.py",
+      "sha256": "fd5b1484a0a7c6755560bb1059d6bda6df9e1cef3a39dcb11c6673df11ed1eb1"
+    },
+    {
+      "path": "motion_inbetween/train/rmi.py",
+      "sha256": "2b065d5009ab53770cec51123deab9a1eb8bae62d1b1dc46271ffe91ea3ccf94"
+    },
+    {
+      "path": "motion_inbetween/train/utils.py",
+      "sha256": "32bcf97405e2ebbcd403fbda8677c2199da1fe55d8cd6b59da91dbe93da0d21e"
+    }
+  ]
+}
