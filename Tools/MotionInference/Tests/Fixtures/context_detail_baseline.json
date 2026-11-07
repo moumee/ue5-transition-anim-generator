@@ -16,7 +16,7 @@
   "source": {
     "model_source_commit": "3d2ba85e4678a5043d61b0be99763b086afa9dc4",
     "vendor_manifest_sha256": "fc8f207fc3211e8747be7d38be0f8e22ba0e27764f84d8d4aaa580a13266a033",
-    "adapter_sha256": "f86fdb9ee0c7cae1d92c1f91705f7f13757ded425eb7fdf346dc47082fbe5364",
+    "adapter_sha256": "8e41ec553591b181da0e1cd394bb6d426d147f93c1a5bd915c32c71452117a12",
     "architecture_sha256": {
       "context": "a12279a65cb668429053c182f77dcfc406c12cf48efa614902e52f22db121289",
       "detail": "adddc1f9acb823fc157814f43c6d1f6425806f3b40a4f9ade7e71775b0b62b0d"

@@ -55,7 +55,7 @@ $inputs = Get-ChildItem "$env:MIB_BATCH_DIR\clips\MM_*\model_input.json" | ForEa
 
 첫 명령은 `Content/Idle_Walk_Jog`의 Idle·Walk·Jog 조합 6개를 플러그인 기본 요청(문맥 = 첫 31샘플의 마지막 10프레임, 목표 = 0번, N=20)으로 생성합니다. 다른 클립은 `--pairs MM_Walk_Fwd:MM_Run_Fwd:WalkToRun ...`처럼 `시작:목적지:이름`으로 지정합니다. 플러그인 역매핑으로 89본 포즈까지 만들고, 그럴듯함 지표를 `transitions/summary.json`에 남깁니다.
 
-두 번째 명령은 `/Game/MotionInbetweening/Baseline`과 `/Improved`에 `AN_<전환>_N20_<버전>` 에셋을 만듭니다. 같은 이름의 이전 에셋은 이 두 폴더 안에서만 교체합니다. 저장 후 다시 평가해 JSON과의 오차를 `transitions/ue_import_report.json`에 남깁니다.
+두 번째 명령은 `/Game/MotionInbetweening/Baseline`과 `/Improved`에 `AN_<전환>_N20_<버전>` 에셋을 만듭니다. 같은 이름의 이전 에셋은 이 두 폴더 안에서만 교체합니다. 지금 만드는 Baseline은 보정만 끈 현재 어댑터라, 저장소의 Baseline 에셋(목표 방향 수정 전 어댑터)과 목표 방향이 다릅니다. 이전 어댑터 비교를 유지하려면 `transitions/summary.json`에서 Improved 항목만 남기고 가져옵니다. 저장 후 다시 평가해 JSON과의 오차를 `transitions/ue_import_report.json`에 남깁니다.
 
 ## 지표 정의 (`metrics.py`)
 

@@ -438,12 +438,16 @@ def place_target(start_pos, start_rot, end_pos, end_rot, transition, policy):
     if policy in ("continue_context", "endpoint_velocity"):
         # Last three observed horizontal steps; the target is N+1 intervals away.
         velocity = np.mean(np.diff(start_pos[-4:, [0, 2]], axis=0), axis=0)
-        start_heading, _ = get_root_heading_offset(start_rot[-1, 0])
-        end_heading, _ = get_root_heading_offset(r[0, 0])
-        turn = start_heading.T @ end_heading
         if policy == "endpoint_velocity":
-            end_velocity = (turn @ (p[1] - p[0]))[[0, 2]]
-            velocity = (velocity + end_velocity) * .5
+            # Keep the target's exported facing. Clips play back-to-back in the same component
+            # space, so matching the Hips heading would carry a turned stance (A_Idle stands
+            # ~23 deg off the Walk/Jog direction) into the target and snap when the clip resumes.
+            turn = np.eye(3)
+            velocity = (velocity + (p[1] - p[0])[[0, 2]]) * .5
+        else:
+            start_heading, _ = get_root_heading_offset(start_rot[-1, 0])
+            end_heading, _ = get_root_heading_offset(r[0, 0])
+            turn = start_heading.T @ end_heading
         desired = start_pos[-1].copy()
         desired[[0, 2]] += velocity * (transition + 1)
         desired[1] = p[0, 1]

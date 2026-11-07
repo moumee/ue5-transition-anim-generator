@@ -264,7 +264,7 @@ class ModelTests(unittest.TestCase):
         np.testing.assert_allclose(actual,expected,rtol=0,atol=meta['atol'])
 
     def test_legacy_settings_reproduce_original_baseline(self):
-        # frame_refinement/input_z_clamp/twist_transfer = null must reproduce the pre-refinement adapter exactly.
+        # frame_refinement/input_z_clamp/twist_transfer = null must reproduce the refinement-free adapter exactly.
         self.check_baseline(self.runtime_with(frame_refinement=None,input_z_clamp=None,twist_transfer=None),'context_detail_baseline')
 
     def test_default_refined_numerical_baseline(self):

@@ -23,7 +23,8 @@ def batch_dir(value=None):
 
 
 def legacy_config(config_path, destination):
-    """Same model files with frame refinement, input clamp and twist transfer disabled (pre-refinement adapter)."""
+    """Same model files with frame refinement, input clamp and twist transfer disabled (refinement-free adapter;
+    target placement follows the current policy)."""
     config_path = Path(config_path).resolve()
     config = json.loads(config_path.read_text(encoding="utf-8-sig"))
     legacy = copy.deepcopy(config)
