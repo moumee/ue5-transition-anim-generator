@@ -1,5 +1,5 @@
 {
-  "purpose": "Numerical drift baseline for the default refined adapter (frame refinement + input z clamp), not visual-quality approval",
+  "purpose": "Numerical drift baseline for the default refined adapter (frame refinement + forearm twist transfer + input z clamp), not visual-quality approval",
   "pipeline": "context_detail",
   "target_placement": "endpoint_velocity",
   "transition_frames": 20,
@@ -41,10 +41,16 @@
       "RightHand"
     ]
   },
+  "twist_transfer": {
+    "joints": [
+      "LeftForeArm",
+      "RightForeArm"
+    ]
+  },
   "source": {
     "model_source_commit": "3d2ba85e4678a5043d61b0be99763b086afa9dc4",
     "vendor_manifest_sha256": "12c3373c29e84cd4ab17a067e7935e28abac282db1cc9ad4b8d16f8a59c4181e",
-    "adapter_sha256": "55413fce383bc8e68e34345599b34944e76374c864f55ba6719f1826e3eb67e1",
+    "adapter_sha256": "bb1c762d11b63dd993d1665674b12f297883f54aefa06af399d968c66093a0bc",
     "architecture_sha256": {
       "context": "a12279a65cb668429053c182f77dcfc406c12cf48efa614902e52f22db121289",
       "detail": "adddc1f9acb823fc157814f43c6d1f6425806f3b40a4f9ade7e71775b0b62b0d"

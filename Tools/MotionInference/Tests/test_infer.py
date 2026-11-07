@@ -11,10 +11,10 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE))
-from infer import (CALIBRATION_FILE, DEFAULT_FRAME_REFINEMENT, DEFAULT_INPUT_Z_CLAMP, Runtime,
+from infer import (CALIBRATION_FILE, DEFAULT_FRAME_REFINEMENT, DEFAULT_INPUT_Z_CLAMP, DEFAULT_TWIST_TRANSFER, Runtime,
                    blend_clamp_offsets, clamp_input_z, decode_rotations, rotation_degrees, file_hash, generate, in_frame, load_frame_refinement,
-                   parse_input_z_clamp, place_target, refine_rotations, roll_matrix, run_request,
-                   save_json, slerp_matrix, text_sha256_variants)
+                   parse_input_z_clamp, parse_twist_transfer, place_target, refine_rotations, roll_matrix, run_request,
+                   save_json, slerp_matrix, text_sha256_variants, transfer_twist, twist_angles, twist_curve)
 import infer
 from official_context_preprocess import (pack_state, project_static_channels, normalize,
                                        reverse_start_center_root, yaw_matrix)
@@ -169,6 +169,53 @@ class FrameRefinementTests(unittest.TestCase):
         self.assertIsNone(parse_input_z_clamp(None, names))
 
 
+def rz(degrees):
+    a = np.radians(degrees)
+    return np.array([[np.cos(a), -np.sin(a), 0.0], [np.sin(a), np.cos(a), 0.0], [0.0, 0.0, 1.0]])
+
+
+class TwistTransferTests(unittest.TestCase):
+    names = FrameRefinementTests.calibration['joint_order']
+    parents = FrameRefinementTests.calibration['parents']
+
+    def test_transfer_removes_roll_keeps_child_orientation_and_inverts(self):
+        rng = np.random.default_rng(11)
+        local = random_rotations(rng, (6, 22))
+        joint, child = self.names.index('LeftForeArm'), self.names.index('LeftHand')
+        bend, roll = rng.uniform(-120, 0, 6), rng.uniform(-80, 80, 6)
+        local[:, joint] = np.stack([rz(b) @ roll_matrix(r) for b, r in zip(bend, roll)])   # hinge, then roll
+        np.testing.assert_allclose(twist_angles(local, joint), roll, atol=1e-9)
+        angles = {joint: twist_angles(local, joint)}
+        moved = transfer_twist(local, [joint], self.parents, angles)
+        np.testing.assert_allclose(moved[:, joint], np.stack([rz(b) for b in bend]), atol=1e-12)
+        np.testing.assert_allclose(moved[:, joint] @ moved[:, child], local[:, joint] @ local[:, child], atol=1e-12)
+        untouched = [j for j in range(22) if j not in (joint, child)]
+        np.testing.assert_array_equal(moved[:, untouched], local[:, untouched])
+        np.testing.assert_allclose(transfer_twist(moved, [joint], self.parents, angles, inverse=True), local, atol=1e-12)
+
+    def test_twist_curve_keeps_known_frames_and_continues_their_speed(self):
+        n = 8
+        target = 10 + n
+        steady = 10.0 + 3.0 * np.arange(12 + n)        # constant twist speed through the whole window
+        measured = steady.copy()
+        measured[10:target] = measured[9]              # unknown frames hold placeholders
+        np.testing.assert_allclose(twist_curve(measured, n), steady, atol=1e-9)
+        wrapped = np.full(12 + n, 170.0)
+        wrapped[target:] = -170.0                      # 20 degrees across the +-180 seam
+        curve = twist_curve(wrapped, n)
+        self.assertAlmostEqual(curve[target] - curve[9], 20.0)
+        self.assertTrue(np.all(np.diff(curve[9:target + 1]) >= 0))
+
+    def test_twist_transfer_settings_are_validated(self):
+        parsed = parse_twist_transfer(DEFAULT_TWIST_TRANSFER, self.names)
+        self.assertEqual(parsed['indices'], [self.names.index(n) for n in DEFAULT_TWIST_TRANSFER['joints']])
+        self.assertIsNone(parse_twist_transfer(None, self.names))
+        for bad in ({'joints': []}, {'joints': ['Hips']}, {'joints': ['LeftForeArm', 'LeftForeArm']},
+                    {'joint': ['LeftForeArm']}, {'joints': ['LeftForeArm'], 'limit': 3}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                parse_twist_transfer(bad, self.names)
+
+
 CONFIG = os.environ.get('MIB_MODEL_CONFIG')
 
 
@@ -217,12 +264,12 @@ class ModelTests(unittest.TestCase):
         np.testing.assert_allclose(actual,expected,rtol=0,atol=meta['atol'])
 
     def test_legacy_settings_reproduce_original_baseline(self):
-        # frame_refinement/input_z_clamp = null must reproduce the pre-refinement adapter exactly.
-        self.check_baseline(self.runtime_with(frame_refinement=None,input_z_clamp=None),'context_detail_baseline')
+        # frame_refinement/input_z_clamp/twist_transfer = null must reproduce the pre-refinement adapter exactly.
+        self.check_baseline(self.runtime_with(frame_refinement=None,input_z_clamp=None,twist_transfer=None),'context_detail_baseline')
 
     def test_default_refined_numerical_baseline(self):
-        if 'frame_refinement' in self.runtime.config or 'input_z_clamp' in self.runtime.config:
-            self.skipTest('The refined baseline uses the built-in refinement and clamp defaults.')
+        if any(key in self.runtime.config for key in ('frame_refinement','input_z_clamp','twist_transfer')):
+            self.skipTest('The refined baseline uses the built-in refinement, clamp and twist defaults.')
         self.check_baseline(self.runtime,'refined_context_detail_baseline')
 
     def test_refinement_keeps_known_frames_and_reports_settings(self):
@@ -235,6 +282,9 @@ class ModelTests(unittest.TestCase):
         if self.runtime.clamp is not None:
             report=inference['diagnostics']['input_z_clamp']
             self.assertEqual(set(report['clamped_known_values']),set(self.runtime.clamp['joints']))
+        if self.runtime.twist is not None:
+            self.assertEqual(inference['twist_transfer'],{'joints':self.runtime.twist['joints']})
+            self.assertEqual(set(inference['diagnostics']['twist_transfer_degrees']),set(self.runtime.twist['joints']))
 
     def test_inputs_exported_with_either_line_ending_are_accepted(self):
         if self.runtime.refine is None:

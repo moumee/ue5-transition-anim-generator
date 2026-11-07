@@ -44,7 +44,7 @@ $inputs = Get-ChildItem "$env:MIB_BATCH_DIR\clips\MM_*\model_input.json" | ForEa
 & $py -X utf8 .\Tools\MotionInference\batch\evaluate_self_inbetweening.py --config $config
 ```
 
-같은 클립의 구간을 지우고 다시 채워 원본과 비교합니다. 기존 어댑터(보정·클램프 끔), 지정 설정, 단순 보간을 그룹별로 표로 출력하고 `evaluation.json`에 남깁니다. 롤은 `MM_*` 클립에서만 추정했으므로, 나머지 클립 묶음(`MF_*` Quinn, `A_*` Idle_Walk_Jog)은 검증 세트로 따로 보고합니다.
+같은 클립의 구간을 지우고 다시 채워 원본과 비교합니다. 기존 어댑터(보정·클램프·비틀림 이동 끔), 지정 설정, 단순 보간을 그룹별로 표로 출력하고 `evaluation.json`에 남깁니다. 롤은 `MM_*` 클립에서만 추정했으므로, 나머지 클립 묶음(`MF_*` Quinn, `A_*` Idle_Walk_Jog)은 검증 세트로 따로 보고합니다.
 
 ## 5. 비교 전환 생성과 에셋 저장
 

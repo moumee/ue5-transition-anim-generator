@@ -7,9 +7,9 @@ diagnostics, not model inputs.
 """
 import argparse
 import json
+import sys
 
 from common import PROJECT, batch_dir
-import sys
 
 sys.path.insert(0, str(PROJECT / "Plugins/MotionInbetweeningHello/Scripts"))
 from prepare_manny_input import prepare  # noqa: E402

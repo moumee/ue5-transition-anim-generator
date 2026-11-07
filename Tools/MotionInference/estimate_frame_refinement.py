@@ -24,14 +24,12 @@ import sys
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
-PROJECT = HERE.parents[1]
-sys.path[:0] = [str(PROJECT / "Tools/MannyLafanMapping"), str(PROJECT / "Plugins/MotionInbetweeningHello/Scripts")]
-from manny_lafan_transform import matrix6d_to_9d  # noqa: E402
-from prepare_manny_input import file_hash  # noqa: E402
 sys.path.insert(0, str(HERE))
-from infer import text_sha256_variants  # noqa: E402  (NumPy only; torch is imported lazily)
+# infer.py adds the team's mapping folders to sys.path and imports torch only inside Runtime.
+from infer import CALIBRATION_FILE, refine_rotations, roll_matrix, text_sha256_variants  # noqa: E402
+from manny_lafan_transform import matrix6d_to_9d  # noqa: E402
+from official_context_preprocess import load_stats  # noqa: E402
 
-CALIBRATION_FILE = PROJECT / "Tools/MannyLafanMapping/rest_pose_corrections_22_prototype.json"
 HINGES = {
     "elbows": [("LeftArm", "LeftForeArm"), ("RightArm", "RightForeArm")],
     "knees": [("LeftUpLeg", "LeftLeg"), ("RightUpLeg", "RightLeg")],
@@ -94,11 +92,6 @@ def roll_for(axis):
     return float(np.degrees(np.arctan2(-axis[1], axis[2])))
 
 
-def roll_matrix(degrees):
-    a = np.radians(degrees)
-    return np.array([[1, 0, 0], [0, np.cos(a), -np.sin(a)], [0, np.sin(a), np.cos(a)]])
-
-
 def estimate(clips, joint_order, hinge_groups):
     rolls, details = {}, {}
     rotations = np.concatenate([r for _, r in clips])
@@ -123,9 +116,6 @@ def estimate(clips, joint_order, hinge_groups):
 
 
 def z_report(clips, joint_order, rolls, stats_path):
-    sys.path.insert(0, str(HERE))
-    from infer import refine_rotations  # local import keeps the script usable without torch
-    from official_context_preprocess import load_stats
     mean, std = load_stats(stats_path)
     calibration = json.loads(CALIBRATION_FILE.read_text(encoding="utf-8"))
     frames = np.repeat(np.eye(3)[None], 22, 0)
