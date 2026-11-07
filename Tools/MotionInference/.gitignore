@@ -2,5 +2,6 @@ models/
 *.local.json
 samples/generated/
 
-# Small, versioned numerical regression fixture (not a dataset).
+# Small, versioned numerical regression fixtures (not datasets).
 !Tests/Fixtures/context_detail_baseline.npz
+!Tests/Fixtures/refined_context_detail_baseline.npz

@@ -10,8 +10,10 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE))
-from infer import (Runtime, decode_rotations, generate, in_frame, place_target,
-                   run_request, save_json, slerp_matrix)
+from infer import (CALIBRATION_FILE, DEFAULT_FRAME_REFINEMENT, DEFAULT_INPUT_Z_CLAMP, Runtime,
+                   clamp_input_z, decode_rotations, file_hash, generate, in_frame, load_frame_refinement,
+                   parse_input_z_clamp, place_target, refine_rotations, roll_matrix, run_request,
+                   save_json, slerp_matrix)
 from official_context_preprocess import (pack_state, project_static_channels, normalize,
                                        reverse_start_center_root, yaw_matrix)
 
@@ -53,6 +55,77 @@ class GeometryTests(unittest.TestCase):
         np.testing.assert_array_equal(c,ep);np.testing.assert_array_equal(d,er)
 
 
+def random_rotations(rng, shape):
+    q = rng.normal(size=shape + (4,))
+    q /= np.linalg.norm(q, axis=-1, keepdims=True)
+    x, y, z, w = np.moveaxis(q, -1, 0)
+    return np.stack([
+        np.stack([1-2*(y*y+z*z), 2*(x*y-z*w), 2*(x*z+y*w)], -1),
+        np.stack([2*(x*y+z*w), 1-2*(x*x+z*z), 2*(y*z-x*w)], -1),
+        np.stack([2*(x*z-y*w), 2*(y*z+x*w), 1-2*(x*x+y*y)], -1)], -2)
+
+
+class FrameRefinementTests(unittest.TestCase):
+    calibration = json.loads(CALIBRATION_FILE.read_text(encoding='utf-8'))
+
+    def test_refinement_equals_reexport_with_refined_calibration(self):
+        # Team mapper: local_j = (M_p B_p)^T (M_j B_j). With B' = B @ C it must equal refine_rotations.
+        rng = np.random.default_rng(3)
+        parents = self.calibration['parents']
+        M, B, C = random_rotations(rng, (4, 22)), random_rotations(rng, (22,)), random_rotations(rng, (22,))
+        C[0] = np.eye(3)
+        def locals_from(globals_):
+            return np.stack([globals_[:, j] if p < 0 else np.swapaxes(globals_[:, p], -1, -2) @ globals_[:, j]
+                             for j, p in enumerate(parents)], axis=1)
+        old = locals_from(M @ B)
+        new = locals_from(M @ B @ C)
+        np.testing.assert_allclose(refine_rotations(old, C, parents), new, atol=1e-12)
+        np.testing.assert_allclose(refine_rotations(new, C, parents, inverse=True), old, atol=1e-12)
+
+    def test_bundled_refinement_matches_committed_calibration(self):
+        frames, info = load_frame_refinement(DEFAULT_FRAME_REFINEMENT, self.calibration)
+        self.assertEqual(info['calibration_sha256'], file_hash(CALIBRATION_FILE))
+        self.assertTrue(set(info['roll_degrees']) <= set(self.calibration['joint_order'][1:]))
+        np.testing.assert_allclose(frames[0], np.eye(3))
+        for name, degrees in info['roll_degrees'].items():
+            np.testing.assert_allclose(frames[self.calibration['joint_order'].index(name)], roll_matrix(degrees))
+
+    def test_invalid_refinement_files_are_rejected(self):
+        document = json.loads(DEFAULT_FRAME_REFINEMENT.read_text(encoding='utf-8'))
+        cases = {
+            'schema': dict(document, schema='other'),
+            'joint order': dict(document, joint_order=list(reversed(document['joint_order']))),
+            'different calibration': dict(document, calibration_sha256='0' * 64),
+            'Invalid frame refinement joint': dict(document, roll_degrees={'Hips': 5.0}),
+            'finite': dict(document, roll_degrees={'LeftArm': float('inf')}),
+        }
+        with tempfile.TemporaryDirectory(prefix='mib refine 한글 ') as folder:
+            for message, payload in cases.items():
+                with self.subTest(message=message):
+                    path = Path(folder) / 'refinement.json'
+                    path.write_text(json.dumps(payload), encoding='utf-8')
+                    with self.assertRaisesRegex(ValueError, message):
+                        load_frame_refinement(path, self.calibration)
+
+    def test_input_clamp_only_touches_selected_joints(self):
+        names = self.calibration['joint_order']
+        clamp = parse_input_z_clamp(DEFAULT_INPUT_Z_CLAMP, names)
+        rng = np.random.default_rng(5)
+        mean, std = rng.normal(size=135), rng.uniform(.01, .5, size=135)
+        states = mean + rng.normal(scale=20, size=(12, 135)) * std
+        clamped, before = clamp_input_z(states, mean, std, clamp)
+        z = (clamped - mean) / std
+        selected = np.zeros(135, dtype=bool); selected[clamp['columns']] = True
+        self.assertLessEqual(np.abs(z[:, selected]).max(), clamp['limit'] + 1e-9)
+        np.testing.assert_array_equal(clamped[:, ~selected], states[:, ~selected])
+        np.testing.assert_allclose(before, np.abs((states - mean) / std)[:, selected])
+        for bad in ({'limit': 0, 'joints': ['LeftArm']}, {'limit': 3, 'joints': ['Hips']},
+                    {'limit': 3, 'joints': ['LeftArm', 'LeftArm']}, {'limit': 3}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                parse_input_z_clamp(bad, names)
+        self.assertIsNone(parse_input_z_clamp(None, names))
+
+
 CONFIG = os.environ.get('MIB_MODEL_CONFIG')
 
 
@@ -83,16 +156,51 @@ class ModelTests(unittest.TestCase):
                 contacts=np.array(result['inference']['diagnostics']['generated_contacts'])
                 self.assertEqual(contacts.shape,(n,4));self.assertTrue(((contacts>=0)&(contacts<=1)).all())
 
-    def test_default_context_detail_numerical_baseline(self):
-        if self.runtime.pipeline!='context_detail' or self.runtime.placement!='endpoint_velocity':
+    def runtime_with(self, **overrides):
+        config=copy.deepcopy(self.runtime.config)
+        config.update({key:str(value) for key,value in self.runtime.files.items()})
+        config.update(overrides)
+        path=self.directory/'config.json';save_json(path,config)
+        return Runtime(path)
+
+    def check_baseline(self, runtime, fixture):
+        if runtime.pipeline!='context_detail' or runtime.placement!='endpoint_velocity':
             self.skipTest('Baseline is specific to the default Context + Detail endpoint_velocity pipeline.')
-        meta=json.loads((HERE/'Tests/Fixtures/context_detail_baseline.json').read_text(encoding='utf-8'))
-        self.assertEqual(meta['model_files_sha256'],self.runtime.hashes)
-        from infer import file_hash
+        meta=json.loads((HERE/f'Tests/Fixtures/{fixture}.json').read_text(encoding='utf-8'))
+        self.assertEqual(meta['model_files_sha256'],runtime.hashes)
         self.assertEqual(meta['input_sha256'],[file_hash(self.start),file_hash(self.end)])
-        expected=np.load(HERE/'Tests/Fixtures/context_detail_baseline.npz',allow_pickle=False)['states']
-        actual=generate(self.runtime,self.start,self.end,20)['predictions_tx135']
-        np.testing.assert_allclose(actual,expected,rtol=0,atol=2e-5)
+        expected=np.load(HERE/f'Tests/Fixtures/{fixture}.npz',allow_pickle=False)['states']
+        actual=generate(runtime,self.start,self.end,20)['predictions_tx135']
+        np.testing.assert_allclose(actual,expected,rtol=0,atol=meta['atol'])
+
+    def test_legacy_settings_reproduce_original_baseline(self):
+        # frame_refinement/input_z_clamp = null must reproduce the pre-refinement adapter exactly.
+        self.check_baseline(self.runtime_with(frame_refinement=None,input_z_clamp=None),'context_detail_baseline')
+
+    def test_default_refined_numerical_baseline(self):
+        if 'frame_refinement' in self.runtime.config or 'input_z_clamp' in self.runtime.config:
+            self.skipTest('The refined baseline uses the built-in refinement and clamp defaults.')
+        self.check_baseline(self.runtime,'refined_context_detail_baseline')
+
+    def test_refinement_keeps_known_frames_and_reports_settings(self):
+        result=generate(self.runtime,self.start,self.end,20)
+        inference=result['inference']
+        self.assertEqual(inference['diagnostics']['context_max_abs_error'],0)
+        self.assertEqual(inference['diagnostics']['target_max_abs_error'],0)
+        if self.runtime.refine is not None:
+            self.assertEqual(inference['frame_refinement']['sha256'],self.runtime.refinement_info['sha256'])
+        if self.runtime.clamp is not None:
+            report=inference['diagnostics']['input_z_clamp']
+            self.assertEqual(set(report['clamped_known_values']),set(self.runtime.clamp['joints']))
+
+    def test_input_from_other_calibration_is_rejected_when_refined(self):
+        if self.runtime.refine is None:
+            self.skipTest('Frame refinement disabled in this configuration.')
+        document=json.loads(self.start.read_text(encoding='utf-8'))
+        document.setdefault('mapping_source_sha256',{})[CALIBRATION_FILE.name]='0'*64
+        path=self.directory/'other_calibration.json';save_json(path,document)
+        with self.assertRaisesRegex(ValueError,'different calibration'):
+            generate(self.runtime,path,self.end,20)
 
     def normalized(self,path,dest):
         document=json.loads(path.read_text(encoding='utf-8'))
