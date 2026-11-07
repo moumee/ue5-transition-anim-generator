@@ -28,6 +28,8 @@ PROJECT = HERE.parents[1]
 sys.path[:0] = [str(PROJECT / "Tools/MannyLafanMapping"), str(PROJECT / "Plugins/MotionInbetweeningHello/Scripts")]
 from manny_lafan_transform import matrix6d_to_9d  # noqa: E402
 from prepare_manny_input import file_hash  # noqa: E402
+sys.path.insert(0, str(HERE))
+from infer import text_sha256_variants  # noqa: E402  (NumPy only; torch is imported lazily)
 
 CALIBRATION_FILE = PROJECT / "Tools/MannyLafanMapping/rest_pose_corrections_22_prototype.json"
 HINGES = {
@@ -52,7 +54,7 @@ def geodesic(A, B):
 
 def load_inputs(paths, calibration):
     clips = []
-    calibration_sha = file_hash(CALIBRATION_FILE)
+    calibration_hashes = text_sha256_variants(CALIBRATION_FILE)   # LF and CRLF checkouts
     for path in paths:
         document = json.loads(Path(path).read_text(encoding="utf-8-sig"))
         if document.get("schema") != "motion_inbetweening.manny_input.v1":
@@ -62,7 +64,7 @@ def load_inputs(paths, calibration):
         if document.get("joint_order") != calibration["joint_order"]:
             raise ValueError(f"{path}: joint order differs from the calibration")
         recorded = (document.get("mapping_source_sha256") or {}).get(CALIBRATION_FILE.name)
-        if recorded is not None and recorded != calibration_sha:
+        if recorded is not None and recorded not in calibration_hashes:
             raise ValueError(f"{path}: exported with a different calibration file")
         states = np.asarray(document["vectors_tx135"], dtype=np.float64)
         clips.append((document.get("source_animation", str(path)), matrix6d_to_9d(states[:, :132].reshape(-1, 22, 6))))
@@ -160,7 +162,7 @@ def main():
                         "joint lies on LAFAN1's local +Z hinge. infer.py applies it before the model and undoes "
                         "it after, so exported inputs and the inverse mapper are unchanged."),
         "calibration_file": CALIBRATION_FILE.name,
-        "calibration_sha256": file_hash(CALIBRATION_FILE),
+        "calibration_sha256": text_sha256_variants(CALIBRATION_FILE)[0],   # LF line endings
         "joint_order": joint_order,
         "roll_degrees": rolls,
         "estimation": {

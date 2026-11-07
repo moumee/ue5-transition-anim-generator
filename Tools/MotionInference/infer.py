@@ -69,6 +69,16 @@ def decode_rotations(values):
     return matrix6d_to_9d(six)
 
 
+def text_sha256_variants(path):
+    """SHA-256 of a text file with LF and with CRLF line endings.
+
+    Git may check the calibration out with either ending (core.autocrlf), so
+    recorded hashes are compared against both. The first item is the LF hash.
+    """
+    lf = Path(path).read_bytes().replace(b"\r\n", b"\n")
+    return [hashlib.sha256(lf).hexdigest(), hashlib.sha256(lf.replace(b"\n", b"\r\n")).hexdigest()]
+
+
 def roll_matrix(degrees):
     """Rotation about the joint's local +X (bone) axis."""
     angle = np.radians(degrees)
@@ -87,8 +97,8 @@ def load_frame_refinement(path, calibration):
     names = calibration["joint_order"]
     if document.get("joint_order") != names:
         raise ValueError("Frame refinement joint order differs from the team calibration.")
-    calibration_sha = file_hash(CALIBRATION_FILE)
-    if document.get("calibration_sha256") != calibration_sha:
+    calibration_hashes = text_sha256_variants(CALIBRATION_FILE)
+    if document.get("calibration_sha256") not in calibration_hashes:
         raise ValueError("Frame refinement was estimated for a different calibration file. "
                          "Re-run estimate_frame_refinement.py.")
     rolls = document.get("roll_degrees")
@@ -103,7 +113,8 @@ def load_frame_refinement(path, calibration):
             raise ValueError(f"Roll for {name} must be finite degrees in [-180, 180].")
         frames[names.index(name)] = roll_matrix(value)
     return frames, {"file": str(path.resolve()), "sha256": file_hash(path),
-                    "calibration_sha256": calibration_sha, "roll_degrees": dict(rolls)}
+                    "calibration_sha256": calibration_hashes[0], "calibration_sha256_variants": calibration_hashes,
+                    "roll_degrees": dict(rolls)}
 
 
 def refine_rotations(rotations, frames, parents, inverse=False):
@@ -404,7 +415,7 @@ def generate(runtime, start_path, end_path, transition, start_index=None, target
         # The refinement is defined relative to one calibration; refuse inputs exported with another.
         for document, label in ((start, "start"), (end, "end")):
             recorded = (document.get("mapping_source_sha256") or {}).get(CALIBRATION_FILE.name)
-            if recorded is not None and recorded != refinement_info["calibration_sha256"]:
+            if recorded is not None and recorded not in refinement_info["calibration_sha256_variants"]:
                 raise ValueError(f"The {label} input was exported with a different calibration than the "
                                  "frame refinement expects. Re-export it or re-estimate the refinement.")
     # Unknown frames are placeholders. Their actual predictions come from the models.

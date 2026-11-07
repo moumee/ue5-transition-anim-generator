@@ -15,8 +15,12 @@
   ],
   "frame_refinement": {
     "file": "configs/manny_frame_refinement_v1.json",
-    "sha256": "c2068505ab59a643beb5f6832df48206a9c9da715220c7f219ea666d0c07f14d",
-    "calibration_sha256": "1aa892791062f693ed1bbca6e23a676252e7a612ea7d2b4ec910b899128f3918",
+    "sha256": "d70af06c3d309f8683091d9f59709dfbb865d57029f735d55920d8200cb377cf",
+    "calibration_sha256": "f5f5b068c4cc82adbf4967521fe25a04157f2226c68dda1cfd0e7f1d3332aaba",
+    "calibration_sha256_variants": [
+      "f5f5b068c4cc82adbf4967521fe25a04157f2226c68dda1cfd0e7f1d3332aaba",
+      "1aa892791062f693ed1bbca6e23a676252e7a612ea7d2b4ec910b899128f3918"
+    ],
     "roll_degrees": {
       "LeftArm": -30.017,
       "LeftForeArm": -29.218,
@@ -40,7 +44,7 @@
   "source": {
     "model_source_commit": "3d2ba85e4678a5043d61b0be99763b086afa9dc4",
     "vendor_manifest_sha256": "12c3373c29e84cd4ab17a067e7935e28abac282db1cc9ad4b8d16f8a59c4181e",
-    "adapter_sha256": "68a6d1fa00a9e33dbae1fd47c5d826e6d86e6015d743f9fe7c3884038052fef4",
+    "adapter_sha256": "9011e0b5cd1c87da9a941930eb04bd552745e9b4c5a86b1daa8597088baf1a37",
     "architecture_sha256": {
       "context": "a12279a65cb668429053c182f77dcfc406c12cf48efa614902e52f22db121289",
       "detail": "adddc1f9acb823fc157814f43c6d1f6425806f3b40a4f9ade7e71775b0b62b0d"

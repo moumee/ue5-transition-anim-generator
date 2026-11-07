@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -13,7 +14,8 @@ sys.path.insert(0, str(HERE))
 from infer import (CALIBRATION_FILE, DEFAULT_FRAME_REFINEMENT, DEFAULT_INPUT_Z_CLAMP, Runtime,
                    clamp_input_z, decode_rotations, file_hash, generate, in_frame, load_frame_refinement,
                    parse_input_z_clamp, place_target, refine_rotations, roll_matrix, run_request,
-                   save_json, slerp_matrix)
+                   save_json, slerp_matrix, text_sha256_variants)
+import infer
 from official_context_preprocess import (pack_state, project_static_channels, normalize,
                                        reverse_start_center_root, yaw_matrix)
 
@@ -83,12 +85,26 @@ class FrameRefinementTests(unittest.TestCase):
         np.testing.assert_allclose(refine_rotations(new, C, parents, inverse=True), old, atol=1e-12)
 
     def test_bundled_refinement_matches_committed_calibration(self):
+        recorded = json.loads(DEFAULT_FRAME_REFINEMENT.read_text(encoding='utf-8'))['calibration_sha256']
+        self.assertIn(recorded, text_sha256_variants(CALIBRATION_FILE))
         frames, info = load_frame_refinement(DEFAULT_FRAME_REFINEMENT, self.calibration)
-        self.assertEqual(info['calibration_sha256'], file_hash(CALIBRATION_FILE))
+        self.assertEqual(info['calibration_sha256'], recorded)
         self.assertTrue(set(info['roll_degrees']) <= set(self.calibration['joint_order'][1:]))
         np.testing.assert_allclose(frames[0], np.eye(3))
         for name, degrees in info['roll_degrees'].items():
             np.testing.assert_allclose(frames[self.calibration['joint_order'].index(name)], roll_matrix(degrees))
+
+    def test_calibration_line_endings_do_not_matter(self):
+        # core.autocrlf may check the calibration out with LF or CRLF; both must be accepted.
+        content = CALIBRATION_FILE.read_bytes().replace(b'\r\n', b'\n')
+        with tempfile.TemporaryDirectory(prefix='mib eol 한글 ') as folder:
+            for label, data in (('lf', content), ('crlf', content.replace(b'\n', b'\r\n'))):
+                with self.subTest(label=label):
+                    copy_path = Path(folder) / f'calibration_{label}.json'
+                    copy_path.write_bytes(data)
+                    with mock.patch.object(infer, 'CALIBRATION_FILE', copy_path):
+                        _, info = load_frame_refinement(DEFAULT_FRAME_REFINEMENT, self.calibration)
+                    self.assertEqual(set(info['calibration_sha256_variants']), set(text_sha256_variants(copy_path)))
 
     def test_invalid_refinement_files_are_rejected(self):
         document = json.loads(DEFAULT_FRAME_REFINEMENT.read_text(encoding='utf-8'))
@@ -192,6 +208,16 @@ class ModelTests(unittest.TestCase):
         if self.runtime.clamp is not None:
             report=inference['diagnostics']['input_z_clamp']
             self.assertEqual(set(report['clamped_known_values']),set(self.runtime.clamp['joints']))
+
+    def test_inputs_exported_with_either_line_ending_are_accepted(self):
+        if self.runtime.refine is None:
+            self.skipTest('Frame refinement disabled in this configuration.')
+        document=json.loads(self.start.read_text(encoding='utf-8'))
+        for recorded in text_sha256_variants(CALIBRATION_FILE):
+            with self.subTest(recorded=recorded[:8]):
+                document['mapping_source_sha256'][CALIBRATION_FILE.name]=recorded
+                path=self.directory/f'start_{recorded[:8]}.json';save_json(path,document)
+                self.assertEqual(generate(self.runtime,path,self.end,5)['frame_count'],16)
 
     def test_input_from_other_calibration_is_rejected_when_refined(self):
         if self.runtime.refine is None:
