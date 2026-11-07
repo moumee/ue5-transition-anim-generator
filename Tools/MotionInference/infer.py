@@ -162,6 +162,31 @@ def clamp_input_z(states, mean, std, clamp):
     return result, before
 
 
+def rotation_degrees(matrix):
+    return float(np.degrees(np.arccos(np.clip((np.trace(matrix) - 1) / 2, -1, 1))))
+
+
+def blend_clamp_offsets(rotations, original, seen, joints, transition):
+    """Make a clamped joint's generated frames meet the restored original poses.
+
+    The model is fed clamped context/target rotations (``seen``), but generate()
+    restores the original ones, so the generated segment would jump at the 9->10
+    and target-1->target joins. Spread the two boundary offsets across the
+    segment (SLERP from start to end offset, applied in the parent frame), the
+    rotation counterpart of match_horizontal_boundary_steps.
+    """
+    result = np.array(rotations, dtype=np.float64, copy=True)
+    target, report = 10 + transition, {}
+    for name, joint in joints:
+        start = original[9, joint] @ seen[9, joint].T
+        end = original[target, joint] @ seen[target, joint].T
+        for frame in range(10, target):
+            weight = (frame - 9) / (transition + 1)
+            result[frame, joint] = slerp_matrix(start, end, weight) @ result[frame, joint]
+        report[name] = [rotation_degrees(start), rotation_degrees(end)]
+    return result, report
+
+
 def source_hashes():
     manifest = load_model_output(HERE / "vendor/source_manifest.json")
     for entry in manifest["files"]:
@@ -316,9 +341,16 @@ class Runtime:
                 atten_mask_ctx=mask_ctx, post_process=True)
         if not torch.isfinite(new_pos).all() or not torch.isfinite(new_rot).all():
             raise ValueError("Model produced non-finite poses.")
+        out_rotations = new_rot[0].numpy().astype(np.float64)
+        if self.clamp is not None:
+            names = self.calibration["joint_order"]
+            out_rotations, offsets = blend_clamp_offsets(
+                out_rotations, decode_rotations(unclamped[:, :132].reshape(-1, 22, 6)), projected_rotations,
+                [(name, names.index(name)) for name in self.clamp["joints"]], transition)
+            clamp_report["boundary_offset_degrees"] = offsets
         row, channel = np.unravel_index(np.abs(z[known_frames]).argmax(), z[known_frames].shape)
         frame = int(known_frames[row])
-        return new_pos[0, :, 0].numpy().astype(np.float64), new_rot[0].numpy().astype(np.float64), {
+        return new_pos[0, :, 0].numpy().astype(np.float64), out_rotations, {
             "projected_static_channels": channels.tolist(),
             "max_abs_context_z": float(np.max(np.abs(z))),
             "known_input_max_abs_context_z": {"window_frame": frame, "channel": int(channel),

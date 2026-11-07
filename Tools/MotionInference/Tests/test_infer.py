@@ -12,7 +12,7 @@ import numpy as np
 HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE))
 from infer import (CALIBRATION_FILE, DEFAULT_FRAME_REFINEMENT, DEFAULT_INPUT_Z_CLAMP, Runtime,
-                   clamp_input_z, decode_rotations, file_hash, generate, in_frame, load_frame_refinement,
+                   blend_clamp_offsets, clamp_input_z, decode_rotations, rotation_degrees, file_hash, generate, in_frame, load_frame_refinement,
                    parse_input_z_clamp, place_target, refine_rotations, roll_matrix, run_request,
                    save_json, slerp_matrix, text_sha256_variants)
 import infer
@@ -122,6 +122,33 @@ class FrameRefinementTests(unittest.TestCase):
                     path.write_text(json.dumps(payload), encoding='utf-8')
                     with self.assertRaisesRegex(ValueError, message):
                         load_frame_refinement(path, self.calibration)
+
+    def test_clamp_offsets_are_blended_into_the_generated_segment(self):
+        # The model continues from clamped poses; restored originals must not create a jump at the joins.
+        rng = np.random.default_rng(7)
+        transition, joint = 6, 14
+        target = 10 + transition
+        original = random_rotations(rng, (target + 2, 22))
+        seen = original.copy()
+        seen[9, joint] = roll_matrix(20.0).T @ original[9, joint]
+        seen[target, joint] = roll_matrix(-12.0).T @ original[target, joint]
+        generated = original.copy()
+        for frame in range(10, target):
+            generated[frame, joint] = slerp_matrix(seen[9, joint], seen[target, joint], (frame - 9) / (transition + 1))
+        def steps(sequence):
+            return [rotation_degrees(a.T @ b) for a, b in zip(sequence[:-1], sequence[1:])]
+        model_step = max(steps(np.concatenate(
+            [seen[9:10, joint], generated[10:target, joint], seen[target:target + 1, joint]])))
+        joined = lambda rotations: np.concatenate(
+            [original[9:10, joint], rotations[10:target, joint], original[target:target + 1, joint]])
+        self.assertGreater(steps(joined(generated))[0], 19.0)            # the jump this fixes
+        blended, report = blend_clamp_offsets(generated, original, seen, [('LeftShoulder', joint)], transition)
+        # d(A·B, C·D) <= d(A, C) + d(B, D): each step grows by at most the offset change per frame.
+        offset_change = rotation_degrees(roll_matrix(20.0).T @ roll_matrix(-12.0)) / (transition + 1)
+        self.assertLessEqual(max(steps(joined(blended))), model_step + offset_change + 1e-6)
+        np.testing.assert_allclose(report['LeftShoulder'], [20.0, 12.0], atol=1e-6)
+        untouched = [j for j in range(22) if j != joint]
+        np.testing.assert_array_equal(blended[:, untouched], generated[:, untouched])
 
     def test_input_clamp_only_touches_selected_joints(self):
         names = self.calibration['joint_order']

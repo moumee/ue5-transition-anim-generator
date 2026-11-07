@@ -46,7 +46,7 @@ python -X utf8 -B infer.py --request <request.json 절대경로>
 ## 처리 규약
 
 - **프레임 보정(기본 켜짐)**: 팀 보정 행렬은 팔 체인의 뼈 축 둘레 롤이 24~30° 틀어져 있어 팔꿈치가 LAFAN에 없는 축으로 꺾입니다. `configs/manny_frame_refinement_v1.json`의 관절별 롤을 모델 입력 직전에 적용하고(`l' = C_pᵀ l C_j`, `C = Rx(roll)`) 출력 직후 되돌립니다. 이는 보정 행렬을 `B·C`로 바꿔 다시 내보낸 것과 같으며, 내보낸 입력·역매핑·C++는 바뀌지 않습니다. 보정 파일의 보정 행렬 해시나 입력에 기록된 보정 행렬 해시가 다르면 실패합니다. 근거와 검증은 [docs/frame_refinement.md](../../docs/frame_refinement.md)에 있습니다.
-- **입력 z 클램프(기본 켜짐)**: LAFAN 쇄골은 거의 고정이라 Manny 쇄골 움직임은 항상 분포 밖입니다. 쇄골·위팔·아래팔·손 6D 채널의 모델 입력 z-score를 ±3으로 자릅니다. 문맥·목표는 원본으로 복원되며, 잘린 값 개수와 클램프 전 최대 z를 `diagnostics.input_z_clamp`에 남깁니다.
+- **입력 z 클램프(기본 켜짐)**: LAFAN 쇄골은 거의 고정이라 Manny 쇄골 움직임은 항상 분포 밖입니다. 쇄골·위팔·아래팔·손 6D 채널의 모델 입력 z-score를 ±3으로 자릅니다. 문맥·목표는 원본으로 복원되므로, 시작·끝에서 원본과 클램프본의 회전 차이를 생성 구간에 SLERP로 나눠 더해 접합부가 튀지 않게 합니다(`blend_clamp_offsets`). 잘린 값 개수, 클램프 전 최대 z, 메운 경계 각도를 `diagnostics.input_z_clamp`에 남깁니다.
 - 설정의 `frame_refinement`, `input_z_clamp`를 생략하면 위 기본값을 씁니다. 각각 `null`이면 끄고, 두 키를 모두 `null`로 두면 이전 어댑터와 비트 단위로 같은 결과를 냅니다. `frame_refinement` 경로와 `input_z_clamp`(`{"limit": 3.0, "joints": [...]}`)를 직접 줄 수도 있습니다. 롤은 `estimate_frame_refinement.py`로 다시 추정합니다([batch/README.md](batch/README.md)).
 - 외부 결과는 문맥 10 + 생성 N + 도착 목표 1입니다. 내부에는 도착 목표 다음 프레임을 추가해 `10+N+2`를 만들고 후처리 후 마지막 보조 프레임을 제외합니다. 목표를 복제해 속도를 꾸미지 않습니다.
 - 각각 정렬된 두 입력을 시작 입력 좌표계로 맞춥니다. 선택한 10개 문맥의 마지막 프레임으로 모델 좌표계를 다시 정렬하고, 출력은 시작 입력 좌표계로 되돌립니다. 시작 `alignment`는 원문 그대로 반환합니다.

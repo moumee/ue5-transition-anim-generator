@@ -3,7 +3,7 @@
 Mirrors Plugins/MotionInbetweeningHello/Source/.../MotionInbetweeningAnimSequence.cpp: SK_Mannequin skeleton,
 SKM_Manny_Simple preview, 30 fps, one track per reference bone, root motion off. Assets go to
 /Game/MotionInbetweening/<Baseline|Improved>/AN_<Pair>_N<length>_<variant>; a previous asset with the
-same name in those folders is replaced. Each asset is re-evaluated after saving and compared with the JSON.
+same name in those folders is overwritten in place. Each asset is re-evaluated after saving and compared with the JSON.
   $env:MIB_BATCH_DIR = "<folder>"   # optional
   UnrealEditor-Cmd.exe <project>.uproject -run=pythonscript -script=<this file> -unattended -nullrhi
 """
@@ -26,12 +26,17 @@ def create(entry, mesh, skeleton):
     frames = json.load(open(entry["manny_pose"], encoding="utf-8"))["full_local_pose_frames"]
     folder = f"{ROOT_FOLDER}/{entry['variant']}"
     name = f"AN_{entry['pair']}_N{entry['length']}_{entry['variant']}"
-    if unreal.EditorAssetLibrary.does_asset_exist(f"{folder}/{name}"):
-        unreal.EditorAssetLibrary.delete_asset(f"{folder}/{name}")
-    factory = unreal.AnimSequenceFactory()
-    factory.set_editor_property("target_skeleton", skeleton)
-    factory.set_editor_property("preview_skeletal_mesh", mesh)
-    sequence = unreal.AssetToolsHelpers.get_asset_tools().create_asset(name, folder, unreal.AnimSequence, factory)
+    path = f"{folder}/{name}"
+    if unreal.EditorAssetLibrary.does_asset_exist(path):
+        # Overwrite in place: deleting and recreating can leave the package behind in unattended runs.
+        sequence = unreal.EditorAssetLibrary.load_asset(path)
+        if not isinstance(sequence, unreal.AnimSequence) or sequence.get_editor_property("skeleton") != skeleton:
+            raise RuntimeError(f"{path} exists but is not a Manny Animation Sequence; refusing to overwrite it.")
+    else:
+        factory = unreal.AnimSequenceFactory()
+        factory.set_editor_property("target_skeleton", skeleton)
+        factory.set_editor_property("preview_skeletal_mesh", mesh)
+        sequence = unreal.AssetToolsHelpers.get_asset_tools().create_asset(name, folder, unreal.AnimSequence, factory)
     sequence.set_editor_property("enable_root_motion", False)
     controller = sequence.controller              # IAnimationDataController (UE 5.8 Python)
     if hasattr(controller, "initialize_model"):
@@ -42,7 +47,7 @@ def create(entry, mesh, skeleton):
     bones = [bone["name"] for bone in frames[0]["bones"]]
     for index, bone in enumerate(bones):
         keys = [frame["bones"][index] for frame in frames]
-        controller.add_bone_curve(unreal.Name(bone), False)
+        controller.add_bone_curve(unreal.Name(bone), False)      # False when the track already exists: keys are replaced below
         controller.set_bone_track_keys(
             unreal.Name(bone),
             [unreal.Vector(*k["local_translation_cm"]) for k in keys],
