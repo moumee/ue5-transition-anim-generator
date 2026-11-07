@@ -5,8 +5,8 @@ let the model fill them, and compare with the original frames and with plain int
 (root lerp + local SLERP, the RMI/LaFAN1 baseline). Compares the legacy adapter (frame refinement
 and input clamp disabled) with the given config (defaults: refinement + clamp on).
   python evaluate_self_inbetweening.py --config <model_config.local.json> [--batch-dir <folder>]
-Clips whose name starts with --holdout-prefix (default MF_ = Quinn) are reported separately because
-they were not used to estimate configs/manny_frame_refinement_v1.json.
+configs/manny_frame_refinement_v1.json was estimated from the MM_* clips only (--estimation-prefix);
+every other clip family (MF_* Quinn, A_* Idle_Walk_Jog, ...) is reported as a separate held-out group.
 """
 import argparse
 import json
@@ -55,7 +55,7 @@ def main():
     parser.add_argument("--batch-dir")
     parser.add_argument("--lengths", type=int, nargs="+", default=[10, 15, 20])
     parser.add_argument("--windows-per-clip", type=int, default=9)
-    parser.add_argument("--holdout-prefix", default="MF_")
+    parser.add_argument("--estimation-prefix", default="MM_")
     args = parser.parse_args()
     folder = batch_dir(args.batch_dir)
     offsets = metrics.offsets_from_skeleton(folder / "clips/skeleton.json")
@@ -77,9 +77,13 @@ def main():
             for row in interpolation(truth, length, starts, offsets):
                 results.append({"clip": path.parent.name, "length": length, "method": "interpolation", **row})
     (folder / "evaluation.json").write_text(json.dumps(results, indent=1), encoding="utf-8")
-    groups = {"all clips": lambda c: True, f"held-out ({args.holdout_prefix}*)": lambda c: c.startswith(args.holdout_prefix),
-              "estimation set": lambda c: not c.startswith(args.holdout_prefix),
-              "walk/run": lambda c: "Walk" in c or "Run" in c}
+    families = sorted({r["clip"].split("_")[0] + "_" for r in results})
+    groups = {"all clips": lambda c: True,
+              f"estimation set ({args.estimation_prefix}*)": lambda c: c.startswith(args.estimation_prefix)}
+    for family in families:
+        if family != args.estimation_prefix:
+            groups[f"held-out ({family}*)"] = lambda c, f=family: c.startswith(f)
+    groups["locomotion (Walk/Run/Jog)"] = lambda c: any(k in c for k in ("Walk", "Run", "Jog"))
     keys = ["position_cm", "root_cm", "hands_cm", "rotation_deg_legs", "rotation_deg_arms", "rotation_deg_clavicles"]
     for label, keep in groups.items():
         chosen = [r for r in results if keep(r["clip"])]

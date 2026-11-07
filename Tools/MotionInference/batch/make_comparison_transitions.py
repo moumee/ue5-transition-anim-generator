@@ -5,6 +5,8 @@ destination sample 0, N = --length. Each result is mapped to the 89-bone Manny p
 plugin's Scripts/prepare_manny_output.py and listed in <batch>/transitions/summary.json, which
 ue_import_manny_poses.py turns into Animation Sequences.
   python make_comparison_transitions.py --config <model_config.local.json> [--batch-dir <folder>]
+      [--pairs START:END:LABEL ...]
+The default pairs are the six Idle/Walk/Jog transitions of Content/Idle_Walk_Jog.
 """
 import argparse
 import json
@@ -19,10 +21,16 @@ import metrics
 sys.path.insert(0, str(PROJECT / "Plugins/MotionInbetweeningHello/Scripts"))
 from prepare_manny_output import prepare as prepare_output  # noqa: E402
 
-PAIRS = [("MM_Idle", "MM_Walk_Fwd", "IdleToWalk"), ("MM_Walk_Fwd", "MM_Run_Fwd", "WalkToRun"),
-         ("MM_Run_Fwd", "MM_Walk_Fwd", "RunToWalk"), ("MM_Walk_Fwd", "MM_Idle", "WalkToIdle"),
-         ("MM_Idle", "MM_Run_Fwd", "IdleToRun"), ("MM_Run_Fwd", "MM_Idle", "RunToIdle"),
-         ("MM_Run_Fwd", "MM_Jump", "RunToJump"), ("MM_Land", "MM_Walk_Fwd", "LandToWalk")]
+PAIRS = [("A_Idle", "A_WalkFwd_Loop", "IdleToWalk"), ("A_WalkFwd_Loop", "A_JogFwd_Loop", "WalkToJog"),
+         ("A_JogFwd_Loop", "A_WalkFwd_Loop", "JogToWalk"), ("A_WalkFwd_Loop", "A_Idle", "WalkToIdle"),
+         ("A_Idle", "A_JogFwd_Loop", "IdleToJog"), ("A_JogFwd_Loop", "A_Idle", "JogToIdle")]
+
+
+def parse_pair(text):
+    parts = text.split(":")
+    if len(parts) != 3 or not all(parts):
+        raise argparse.ArgumentTypeError("pairs are START_CLIP:END_CLIP:LABEL")
+    return tuple(parts)
 
 
 def main():
@@ -30,12 +38,13 @@ def main():
     parser.add_argument("--config", required=True)
     parser.add_argument("--batch-dir")
     parser.add_argument("--length", type=int, default=20)
+    parser.add_argument("--pairs", type=parse_pair, nargs="+", default=PAIRS)
     args = parser.parse_args()
     folder = batch_dir(args.batch_dir)
     clips, out = folder / "clips", folder / "transitions"
     offsets = metrics.offsets_from_skeleton(clips / "skeleton.json")
-    ground_levels = []                     # per foot joint: lowest height in the source walk/run clips
-    for name in ("MM_Walk_Fwd", "MM_Run_Fwd"):
+    ground_levels = []                     # per foot joint: lowest height in the clips being joined
+    for name in sorted({clip for start, end, _ in args.pairs for clip in (start, end)}):
         positions, rotations = metrics.load_states(clips / name / "model_input.json")
         ground_levels.append(metrics.fk(rotations, positions, offsets)[1][:, metrics.FOOT, 1].min(axis=0))
     ground = np.min(ground_levels, axis=0)
@@ -45,7 +54,7 @@ def main():
     summary = []
     for variant, config in variants.items():
         runtime = infer.Runtime(config)
-        for start_clip, end_clip, label in PAIRS:
+        for start_clip, end_clip, label in args.pairs:
             start, end = clips / start_clip / "model_input.json", clips / end_clip / "model_input.json"
             start_index = min(json.loads(start.read_text(encoding="utf-8"))["sample_count"], 31) - 10
             result = infer.generate(runtime, start, end, args.length, start_index=start_index, target_index=0)

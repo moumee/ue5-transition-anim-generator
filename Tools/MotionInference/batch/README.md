@@ -44,7 +44,7 @@ $inputs = Get-ChildItem "$env:MIB_BATCH_DIR\clips\MM_*\model_input.json" | ForEa
 & $py -X utf8 .\Tools\MotionInference\batch\evaluate_self_inbetweening.py --config $config
 ```
 
-같은 클립의 구간을 지우고 다시 채워 원본과 비교합니다. 기존 어댑터(보정·클램프 끔), 지정 설정, 단순 보간을 그룹별로 표로 출력하고 `evaluation.json`에 남깁니다. `MF_*`(Quinn) 클립은 롤 추정에 쓰지 않은 검증 세트로 따로 보고합니다.
+같은 클립의 구간을 지우고 다시 채워 원본과 비교합니다. 기존 어댑터(보정·클램프 끔), 지정 설정, 단순 보간을 그룹별로 표로 출력하고 `evaluation.json`에 남깁니다. 롤은 `MM_*` 클립에서만 추정했으므로, 나머지 클립 묶음(`MF_*` Quinn, `A_*` Idle_Walk_Jog)은 검증 세트로 따로 보고합니다.
 
 ## 5. 비교 전환 생성과 에셋 저장
 
@@ -53,7 +53,7 @@ $inputs = Get-ChildItem "$env:MIB_BATCH_DIR\clips\MM_*\model_input.json" | ForEa
 & $engine $project -run=pythonscript "-script=$PWD\Tools\MotionInference\batch\ue_import_manny_poses.py" -unattended -nullrhi
 ```
 
-첫 명령은 Idle·Walk·Run·Jump·Land 조합 8개를 플러그인 기본 요청(문맥 = 첫 31샘플의 마지막 10프레임, 목표 = 0번, N=20)으로 생성합니다. 플러그인 역매핑으로 89본 포즈까지 만들고, 그럴듯함 지표를 `transitions/summary.json`에 남깁니다.
+첫 명령은 `Content/Idle_Walk_Jog`의 Idle·Walk·Jog 조합 6개를 플러그인 기본 요청(문맥 = 첫 31샘플의 마지막 10프레임, 목표 = 0번, N=20)으로 생성합니다. 다른 클립은 `--pairs MM_Walk_Fwd:MM_Run_Fwd:WalkToRun ...`처럼 `시작:목적지:이름`으로 지정합니다. 플러그인 역매핑으로 89본 포즈까지 만들고, 그럴듯함 지표를 `transitions/summary.json`에 남깁니다.
 
 두 번째 명령은 `/Game/MotionInbetweening/Baseline`과 `/Improved`에 `AN_<전환>_N20_<버전>` 에셋을 만듭니다. 같은 이름의 이전 에셋은 이 두 폴더 안에서만 교체합니다. 저장 후 다시 평가해 JSON과의 오차를 `transitions/ue_import_report.json`에 남깁니다.
 
