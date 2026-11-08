@@ -27,6 +27,25 @@ from manny_lafan_transform import matrix6d_to_9d, matrix_to_quat_xyzw, quat_to_m
 
 SUPPORTED_TRANSITION_RANGE = (5, 45)  # Product policy; not a positional-table limit.
 
+CALIBRATION_FILE = PROJECT / "Tools/MannyLafanMapping/rest_pose_corrections_22_prototype.json"
+# Model-frame refinement: per-joint roll about the bone axis (+X) on top of the
+# team calibration, i.e. B' = B @ Rx(roll). Applied just before the model and
+# undone right after it, so exported inputs and the inverse mapper are unchanged.
+DEFAULT_FRAME_REFINEMENT = HERE / "configs/manny_frame_refinement_v1.json"
+# LAFAN1 clavicles are nearly static (6D std ~0.012), so Manny shoulder motion is
+# always far outside the training data; the roll refinement does not correct the
+# 5-7 degree bone-direction tilt of the arm frames either. Bounding these input
+# z-scores keeps a few channels from dominating the encoder (validated on all
+# exported Manny/Quinn clips; see docs/frame_refinement.md at the repository root).
+DEFAULT_INPUT_Z_CLAMP = {"limit": 3.0, "joints": [
+    "LeftShoulder", "LeftArm", "LeftForeArm", "LeftHand",
+    "RightShoulder", "RightArm", "RightForeArm", "RightHand"]}
+# LAFAN1 elbows are pure hinges (the forearm 6D channel that measures roll has std 0.014),
+# so pronation lives in the hand. Some Manny clips carry it on the forearm bone instead
+# (A_JogFwd_Loop: about 60 degrees, z-score 71). The roll about the forearm's bone axis is
+# moved onto the hand before the model and moved back after it, so no pose changes.
+DEFAULT_TWIST_TRANSFER = {"joints": ["LeftForeArm", "RightForeArm"]}
+
 
 def integer(value, label, low, high):
     if type(value) is not int or not low <= value <= high:
@@ -53,6 +72,179 @@ def decode_rotations(values):
     if np.any(np.linalg.norm(a, axis=-1) < 1e-7) or np.any(np.linalg.norm(np.cross(a, b), axis=-1) < 1e-7):
         raise ValueError("Rotation6D contains a zero or collinear basis.")
     return matrix6d_to_9d(six)
+
+
+def text_sha256_variants(path):
+    """SHA-256 of a text file with LF and with CRLF line endings.
+
+    Git may check the calibration out with either ending (core.autocrlf), so
+    recorded hashes are compared against both. The first item is the LF hash.
+    """
+    lf = Path(path).read_bytes().replace(b"\r\n", b"\n")
+    return [hashlib.sha256(lf).hexdigest(), hashlib.sha256(lf.replace(b"\n", b"\r\n")).hexdigest()]
+
+
+def roll_matrix(degrees):
+    """Rotation about the joint's local +X (bone) axis."""
+    angle = np.radians(degrees)
+    c, s = np.cos(angle), np.sin(angle)
+    return np.array([[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]])
+
+
+def load_frame_refinement(path, calibration):
+    """Read per-joint bone-axis rolls; return (22x3x3 frame changes, provenance)."""
+    path = Path(path)
+    if not path.is_file():
+        raise ValueError(f"Missing frame refinement file: {path}")
+    document = load_model_output(path)
+    if document.get("schema") != "motion_inbetweening.frame_refinement.v1":
+        raise ValueError("Unsupported frame refinement schema.")
+    names = calibration["joint_order"]
+    if document.get("joint_order") != names:
+        raise ValueError("Frame refinement joint order differs from the team calibration.")
+    calibration_hashes = text_sha256_variants(CALIBRATION_FILE)
+    if document.get("calibration_sha256") not in calibration_hashes:
+        raise ValueError("Frame refinement was estimated for a different calibration file. "
+                         "Re-run estimate_frame_refinement.py.")
+    rolls = document.get("roll_degrees")
+    if not isinstance(rolls, dict) or not rolls:
+        raise ValueError("Frame refinement needs a non-empty roll_degrees object.")
+    frames = np.repeat(np.eye(3)[None], len(names), axis=0)
+    for name, value in rolls.items():
+        # A root roll would change the heading alignment, so only child joints are allowed.
+        if name not in names[1:]:
+            raise ValueError(f"Invalid frame refinement joint: {name}")
+        if type(value) not in (int, float) or not np.isfinite(value) or abs(value) > 180:
+            raise ValueError(f"Roll for {name} must be finite degrees in [-180, 180].")
+        frames[names.index(name)] = roll_matrix(value)
+    return frames, {"file": str(path.resolve()), "sha256": file_hash(path),
+                    "calibration_sha256": calibration_hashes[0], "calibration_sha256_variants": calibration_hashes,
+                    "roll_degrees": dict(rolls)}
+
+
+def refine_rotations(rotations, frames, parents, inverse=False):
+    """Re-express parent-local rotations in refined joint frames.
+
+    With B'_j = B_j @ C_j the team mapper would produce l'_j = C_p^T l_j C_j,
+    so this is exactly equivalent to re-exporting with the refined calibration.
+    ``inverse=True`` maps model outputs back to the original calibration frames.
+    """
+    rotations = np.asarray(rotations, dtype=np.float64)
+    result = rotations.copy()
+    for joint, parent in enumerate(parents):
+        parent_frame = frames[parent] if parent >= 0 else np.eye(3)
+        if inverse:
+            result[:, joint] = parent_frame @ rotations[:, joint] @ frames[joint].T
+        else:
+            result[:, joint] = parent_frame.T @ rotations[:, joint] @ frames[joint]
+    return result
+
+
+def parse_input_z_clamp(value, joint_order):
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != {"limit", "joints"}:
+        raise ValueError("input_z_clamp must be null or an object with limit and joints.")
+    limit, joints = value["limit"], value["joints"]
+    if type(limit) not in (int, float) or not np.isfinite(limit) or limit <= 0:
+        raise ValueError("input_z_clamp.limit must be a positive number.")
+    if (not isinstance(joints, list) or not joints or len(set(joints)) != len(joints)
+            or any(name not in joint_order[1:] for name in joints)):
+        raise ValueError("input_z_clamp.joints must list distinct non-root model joints.")
+    columns = np.concatenate([np.arange(joint_order.index(n) * 6, joint_order.index(n) * 6 + 6) for n in joints])
+    return {"limit": float(limit), "joints": list(joints), "columns": columns}
+
+
+def clamp_input_z(states, mean, std, clamp):
+    """Clip selected rotation channels to mean +- limit * std (z-score clamp)."""
+    states = np.asarray(states, dtype=np.float64)
+    columns, limit = clamp["columns"], clamp["limit"]
+    z = (states[:, columns] - mean[columns]) / std[columns]
+    before = np.abs(z)
+    result = states.copy()                  # untouched values stay bit-identical
+    result[:, columns] = np.where(before > limit, mean[columns] + np.clip(z, -limit, limit) * std[columns],
+                                  states[:, columns])
+    return result, before
+
+
+def rotation_degrees(matrix):
+    return float(np.degrees(np.arccos(np.clip((np.trace(matrix) - 1) / 2, -1, 1))))
+
+
+def blend_clamp_offsets(rotations, original, seen, joints, transition):
+    """Make a clamped joint's generated frames meet the restored original poses.
+
+    The model is fed clamped context/target rotations (``seen``), but generate()
+    restores the original ones, so the generated segment would jump at the 9->10
+    and target-1->target joins. Spread the two boundary offsets across the
+    segment (SLERP from start to end offset, applied in the parent frame), the
+    rotation counterpart of match_horizontal_boundary_steps.
+    """
+    result = np.array(rotations, dtype=np.float64, copy=True)
+    target, report = 10 + transition, {}
+    for name, joint in joints:
+        start = original[9, joint] @ seen[9, joint].T
+        end = original[target, joint] @ seen[target, joint].T
+        for frame in range(10, target):
+            weight = (frame - 9) / (transition + 1)
+            result[frame, joint] = slerp_matrix(start, end, weight) @ result[frame, joint]
+        report[name] = [rotation_degrees(start), rotation_degrees(end)]
+    return result, report
+
+
+def parse_twist_transfer(value, joint_order):
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != {"joints"}:
+        raise ValueError("twist_transfer must be null or an object with joints.")
+    joints = value["joints"]
+    if (not isinstance(joints, list) or not joints or len(set(joints)) != len(joints)
+            or any(name not in joint_order[1:] for name in joints)):
+        raise ValueError("twist_transfer.joints must list distinct non-root model joints.")
+    return {"joints": list(joints), "indices": [joint_order.index(name) for name in joints]}
+
+
+def twist_angles(rotations, joint):
+    """Roll (degrees) of a +Z hinge joint about its own bone axis (+X), per frame.
+
+    Row 2 of a local rotation is the parent's +Z axis seen from the joint. For a pure
+    hinge Rz(bend) it is the joint's own +Z; a roll Rx(a) after the bend turns it by a
+    within the joint's Y-Z plane, whatever the bend angle.
+    """
+    local = np.asarray(rotations, dtype=np.float64)[:, joint]
+    return np.degrees(np.arctan2(local[:, 2, 1], local[:, 2, 2]))
+
+
+def twist_curve(angles, transition):
+    """Twist for every window frame: measured on known frames, cubic Hermite in between.
+
+    The curve leaves frame 9 with the context's last twist step and reaches the target
+    with the target's step into its next frame, so the restored roll does not jump.
+    """
+    angles = np.degrees(np.unwrap(np.radians(angles)))      # shortest way across +-180
+    target, span = 10 + transition, transition + 1
+    u = np.arange(1, span) / span                             # frames 10 .. target-1
+    start_slope = (angles[9] - angles[8]) * span
+    end_slope = (angles[target + 1] - angles[target]) * span
+    angles[10:target] = ((2 * u**3 - 3 * u**2 + 1) * angles[9] + (u**3 - 2 * u**2 + u) * start_slope
+                         + (-2 * u**3 + 3 * u**2) * angles[target] + (u**3 - u**2) * end_slope)
+    return angles
+
+
+def transfer_twist(rotations, joints, parents, angles, inverse=False):
+    """Move each joint's roll about its bone axis onto its children (inverse=True moves it back).
+
+    local_j <- local_j Rx(-a) and local_child <- Rx(a) local_child: only the joint's own
+    frame turns about its bone axis, so child orientations are unchanged and, with bones
+    along +X as in LAFAN1, so are all joint positions.
+    """
+    result = np.array(rotations, dtype=np.float64, copy=True)
+    for joint in joints:
+        rolls = np.stack([roll_matrix(a if inverse else -a) for a in angles[joint]])
+        result[:, joint] = result[:, joint] @ rolls
+        for child in (c for c, p in enumerate(parents) if p == joint):
+            result[:, child] = np.swapaxes(rolls, -1, -2) @ result[:, child]
+    return result
 
 
 def source_hashes():
@@ -88,6 +280,23 @@ class Runtime:
             raise ValueError("Unknown target_placement policy.")
         torch.set_num_threads(integer(self.config.get("cpu_threads", 4), "cpu_threads", 1, 32))
         self.provenance = source_hashes()
+        self.calibration = load_model_output(CALIBRATION_FILE)
+        # Omitted -> bundled refinement; null -> disabled (legacy behaviour); string -> path
+        # relative to this config file.
+        if "frame_refinement" not in self.config:
+            refinement_path = DEFAULT_FRAME_REFINEMENT
+        elif self.config["frame_refinement"] is None:
+            refinement_path = None
+        elif isinstance(self.config["frame_refinement"], str) and self.config["frame_refinement"]:
+            refinement_path = (self.config_path.parent / self.config["frame_refinement"]).resolve()
+        else:
+            raise ValueError("frame_refinement must be omitted, null or a file path.")
+        self.refine, self.refinement_info = (None, None) if refinement_path is None else \
+            load_frame_refinement(refinement_path, self.calibration)
+        self.clamp = parse_input_z_clamp(self.config.get("input_z_clamp", DEFAULT_INPUT_Z_CLAMP),
+                                         self.calibration["joint_order"])
+        self.twist = parse_twist_transfer(self.config.get("twist_transfer", DEFAULT_TWIST_TRANSFER),
+                                          self.calibration["joint_order"])
         pinned = load_model_output(HERE / "model_manifest.json")["files"]
         self.files, self.hashes = {}, {}
         required = ["context_checkpoint", "context_statistics"]
@@ -156,6 +365,18 @@ class Runtime:
         target = 10 + transition
         states = pack_state(rotations, positions)
         projected, channels = project_static_channels(states, self.mean, self.std)
+        unclamped = projected                           # diagnostics describe the actual input
+        z = (projected - self.mean) / self.std          # model-input z-scores before any clamp
+        known_frames = np.r_[0:10, target:target+2]
+        clamp_report = None
+        if self.clamp is not None:
+            projected, before = clamp_input_z(projected, self.mean, self.std, self.clamp)
+            known = before[known_frames].reshape(len(known_frames), -1, 6)
+            clamp_report = {"limit": self.clamp["limit"],
+                            "clamped_known_values": {name: int((known[:, i] > self.clamp["limit"]).sum())
+                                                     for i, name in enumerate(self.clamp["joints"])},
+                            "known_max_abs_z_before": {name: float(known[:, i].max())
+                                                       for i, name in enumerate(self.clamp["joints"])}}
         projected_rotations = decode_rotations(projected[:, :132].reshape(-1, 22, 6))
         position_tensor = torch.zeros(1, len(states), 22, 3, dtype=torch.float32)
         position_tensor[0, :, 0] = torch.tensor(projected[:, -3:], dtype=torch.float32)
@@ -182,17 +403,23 @@ class Runtime:
                 atten_mask_ctx=mask_ctx, post_process=True)
         if not torch.isfinite(new_pos).all() or not torch.isfinite(new_rot).all():
             raise ValueError("Model produced non-finite poses.")
-        z = (projected - self.mean) / self.std
-        known_frames = np.r_[0:10, target:target+2]
+        out_rotations = new_rot[0].numpy().astype(np.float64)
+        if self.clamp is not None:
+            names = self.calibration["joint_order"]
+            out_rotations, offsets = blend_clamp_offsets(
+                out_rotations, decode_rotations(unclamped[:, :132].reshape(-1, 22, 6)), projected_rotations,
+                [(name, names.index(name)) for name in self.clamp["joints"]], transition)
+            clamp_report["boundary_offset_degrees"] = offsets
         row, channel = np.unravel_index(np.abs(z[known_frames]).argmax(), z[known_frames].shape)
         frame = int(known_frames[row])
-        return new_pos[0, :, 0].numpy().astype(np.float64), new_rot[0].numpy().astype(np.float64), {
+        return new_pos[0, :, 0].numpy().astype(np.float64), out_rotations, {
             "projected_static_channels": channels.tolist(),
             "max_abs_context_z": float(np.max(np.abs(z))),
             "known_input_max_abs_context_z": {"window_frame": frame, "channel": int(channel),
-                "value": float(projected[frame, channel]), "mean": float(self.mean[channel]),
+                "value": float(unclamped[frame, channel]), "mean": float(self.mean[channel]),
                 "std": float(self.std[channel]), "signed_z": float(z[frame, channel])},
             "generated_contacts": None if contacts is None else contacts[0, 10:target].tolist(),
+            "input_z_clamp": clamp_report,
         }
 
 
@@ -211,12 +438,16 @@ def place_target(start_pos, start_rot, end_pos, end_rot, transition, policy):
     if policy in ("continue_context", "endpoint_velocity"):
         # Last three observed horizontal steps; the target is N+1 intervals away.
         velocity = np.mean(np.diff(start_pos[-4:, [0, 2]], axis=0), axis=0)
-        start_heading, _ = get_root_heading_offset(start_rot[-1, 0])
-        end_heading, _ = get_root_heading_offset(r[0, 0])
-        turn = start_heading.T @ end_heading
         if policy == "endpoint_velocity":
-            end_velocity = (turn @ (p[1] - p[0]))[[0, 2]]
-            velocity = (velocity + end_velocity) * .5
+            # Keep the target's exported facing. Clips play back-to-back in the same component
+            # space, so matching the Hips heading would carry a turned stance (A_Idle stands
+            # ~23 deg off the Walk/Jog direction) into the target and snap when the clip resumes.
+            turn = np.eye(3)
+            velocity = (velocity + (p[1] - p[0])[[0, 2]]) * .5
+        else:
+            start_heading, _ = get_root_heading_offset(start_rot[-1, 0])
+            end_heading, _ = get_root_heading_offset(r[0, 0])
+            turn = start_heading.T @ end_heading
         desired = start_pos[-1].copy()
         desired[[0, 2]] += velocity * (transition + 1)
         desired[1] = p[0, 1]
@@ -274,13 +505,37 @@ def generate(runtime, start_path, end_path, transition, start_index=None, target
     ep, er = reverse_start_center_root(ep, er, end["alignment"]["position_offset_xz"], end["alignment"]["rotation_offset"])
     ep, er = in_frame(ep, er, start["alignment"])
     ep, er = place_target(sp, sr, ep, er, transition, runtime.placement)
+    refine = getattr(runtime, "refine", None)
+    refinement_info = getattr(runtime, "refinement_info", None)
+    clamp = getattr(runtime, "clamp", None)
+    twist = getattr(runtime, "twist", None)
+    parents = start["parents"]
+    if refine is not None:
+        # The refinement is defined relative to one calibration; refuse inputs exported with another.
+        for document, label in ((start, "start"), (end, "end")):
+            recorded = (document.get("mapping_source_sha256") or {}).get(CALIBRATION_FILE.name)
+            if recorded is not None and recorded not in refinement_info["calibration_sha256_variants"]:
+                raise ValueError(f"The {label} input was exported with a different calibration than the "
+                                 "frame refinement expects. Re-export it or re-estimate the refinement.")
     # Unknown frames are placeholders. Their actual predictions come from the models.
     positions = np.concatenate([sp, np.repeat(sp[-1:], transition, axis=0), ep])
     rotations = np.concatenate([sr, np.repeat(sr[-1:], transition, axis=0), er])
+    if refine is not None:
+        rotations = refine_rotations(rotations, refine, parents)
+    if twist is not None:
+        measured = {joint: twist_angles(rotations, joint) for joint in twist["indices"]}
+        rotations = transfer_twist(rotations, twist["indices"], parents, measured)
     centered_p, centered_r, offset, turn, _ = start_center_root(positions, rotations, 10)
     out_p, out_r, diagnostics = runtime.predict_window(centered_p, centered_r, transition)
     out_p, out_r = reverse_start_center_root(out_p, out_r, offset, turn)
     target = 10 + transition
+    if twist is not None:
+        curves = {joint: twist_curve(angles, transition) for joint, angles in measured.items()}
+        out_r = transfer_twist(out_r, twist["indices"], parents, curves, inverse=True)
+        diagnostics["twist_transfer_degrees"] = {name: [float(curves[joint][9]), float(curves[joint][target])]
+                                                 for name, joint in zip(twist["joints"], twist["indices"])}
+    if refine is not None:
+        out_r = refine_rotations(out_r, refine, parents, inverse=True)
     if runtime.placement == "endpoint_velocity":
         out_p, diagnostics["horizontal_boundary_correction"] = match_horizontal_boundary_steps(out_p, sp, ep, transition)
     # The model has no learned toe variation. Restore observed endpoints and
@@ -327,6 +582,9 @@ def generate(runtime, start_path, end_path, transition, start_index=None, target
             "start_context_start_index": start_index, "end_target_index": target_index,
             "alignment_reference": "original_start_input_frame_index",
             "end_target_next_index": target_index + 1, "context_post_process": True, "detail_post_process": runtime.detail is not None,
+            "frame_refinement": refinement_info,
+            "input_z_clamp": None if clamp is None else {"limit": clamp["limit"], "joints": clamp["joints"]},
+            "twist_transfer": None if twist is None else {"joints": twist["joints"]},
             "model_files_sha256": runtime.hashes, "source": runtime.provenance, "config_snapshot": runtime.config,
             "config_sha256": file_hash(runtime.config_path), "python": sys.version.split()[0],
             "torch": runtime.torch.__version__, "numpy": np.__version__, "diagnostics": diagnostics}}

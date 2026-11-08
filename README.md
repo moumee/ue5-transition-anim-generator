@@ -28,6 +28,10 @@ $projectFile = (Resolve-Path '.\transition_generator.uproject').Path
 
 콘텐츠 브라우저의 `Content/MotionInbetweening/Generated/AN_Manny_Output23`을 열고 ▶를 누릅니다. 이 에셋은 아래 샘플과 공식 모델로 생성한 Walk→Run 결과이며 31키·30fps·1초입니다. 기존 결과 재생에는 외부 Python과 모델 설치가 필요 없습니다.
 
+### 프레임 보정 전후 비교
+
+`Content/MotionInbetweening/Baseline`과 `Content/MotionInbetweening/Improved`에 `Content/Idle_Walk_Jog` 클립(A_Idle·A_WalkFwd_Loop·A_JogFwd_Loop) 사이 전환 6개(N=20)의 보정 전·후 결과가 있습니다. `AN_Manny_Output23`은 보정 전에 만든 기존 데모입니다. 현재 `infer.py`는 Manny 팔 체인 롤 보정, 아래팔 비틀림 이동, 쇄골·팔 입력 클램프를 기본으로 적용합니다. 원인·변경·검증은 [docs/frame_refinement.md](docs/frame_refinement.md)를 봅니다.
+
 0~9프레임은 Walk 문맥, 10~29는 생성, 30은 Run 목표입니다. 전환 경계 9→10과 29→30, 진행 방향과 발 움직임을 확인합니다. 30→0 반복 재생 점프는 전환 내부의 경계와 구분합니다. 뷰포트에서 `Alt+H`는 이 샘플의 측면, `Alt+G`는 원근, `F`는 현재 포즈에 카메라 맞추기입니다.
 
 ## 내 PC에서 직접 생성하기
@@ -92,6 +96,8 @@ Tools/MotionInference/models/
 ## 확인 범위와 문제 확인
 
 새 Python 환경 설치, 모델/좌표 16개와 호출기 27개 검사, UE 빌드·실제 추론/에셋 저장·새 프로세스 재로드·전체 메뉴 흐름을 확인했습니다. 2026-10-31 사용자가 Walk→Run 테스트 후 결과를 수락했습니다. 이는 이 샘플의 사용 확인이며 모든 동작의 품질이나 발 미끄러짐 제거를 보장하지 않습니다. 기준 지면 아래 발볼 관절 오차(측정 최저 약 -2.93cm)가 남아 있습니다.
+
+2026-11-07 프레임 보정·아래팔 비틀림 이동 변경 후 README 고정 환경(Python 3.11.9 · torch 2.11.0 · numpy 1.26.4)과 공식 가중치로 모델/좌표 29개, 호출기 27개, 매핑 15개 검사가 통과했습니다. 비교 에셋 12개는 UE 5.8.3에서 생성 후 새 프로세스로 다시 열어 확인했습니다. 발 IK가 없으므로 일부 전환에는 지면 관통(Idle_Walk_Jog에서 최대 약 -4.7cm)이 남습니다.
 
 추론 실패는 **Open Last Manny Transition Job** 또는 `Saved/MotionInbetweening/Inference/<작업ID>/`의 `pipeline_result.json`, `model_stderr.log`를 확인합니다. 정상 저장은 `success=true`, `stage=completed`, `asset_path`로 확인합니다. `vendor source differs` 오류는 원본 코드 변경/줄바꿈, 모델 해시 오류는 다른 버전이나 미완료 다운로드를 먼저 확인합니다.
 

@@ -1,0 +1,158 @@
+{
+  "schema": "motion_inbetweening.frame_refinement.v1",
+  "description": "Per-joint roll (degrees) about the bone's local +X axis applied on top of the team calibration, B' = B @ Rx(roll). Estimated so that the measured bend axis of each hinge joint lies on LAFAN1's local +Z hinge. infer.py applies it before the model and undoes it after, so exported inputs and the inverse mapper are unchanged.",
+  "calibration_file": "rest_pose_corrections_22_prototype.json",
+  "calibration_sha256": "f5f5b068c4cc82adbf4967521fe25a04157f2226c68dda1cfd0e7f1d3332aaba",
+  "joint_order": [
+    "Hips",
+    "LeftUpLeg",
+    "LeftLeg",
+    "LeftFoot",
+    "LeftToe",
+    "RightUpLeg",
+    "RightLeg",
+    "RightFoot",
+    "RightToe",
+    "Spine",
+    "Spine1",
+    "Spine2",
+    "Neck",
+    "Head",
+    "LeftShoulder",
+    "LeftArm",
+    "LeftForeArm",
+    "LeftHand",
+    "RightShoulder",
+    "RightArm",
+    "RightForeArm",
+    "RightHand"
+  ],
+  "roll_degrees": {
+    "LeftArm": -30.017,
+    "LeftForeArm": -29.218,
+    "RightArm": 24.22,
+    "RightForeArm": 26.649
+  },
+  "estimation": {
+    "method": "hinge_axis_alignment",
+    "script": "estimate_frame_refinement.py",
+    "created_utc": "2026-11-07T12:40:01+00:00",
+    "hinges": [
+      "elbows"
+    ],
+    "clips": [
+      "/Game/ControlRig/Characters/Mannequins/Animations/Manny/MM_Fall_Loop",
+      "/Game/ControlRig/Characters/Mannequins/Animations/Manny/MM_Idle",
+      "/Game/ControlRig/Characters/Mannequins/Animations/Manny/MM_Jump",
+      "/Game/ControlRig/Characters/Mannequins/Animations/Manny/MM_Land",
+      "/Game/ControlRig/Characters/Mannequins/Animations/Manny/MM_Run_Fwd",
+      "/Game/ControlRig/Characters/Mannequins/Animations/Manny/MM_Walk_Fwd",
+      "/Game/ControlRig/Characters/Mannequins/Animations/Manny/MM_Walk_InPlace"
+    ],
+    "frames": 595,
+    "joints": {
+      "LeftForeArm": {
+        "hinge_parent": "LeftArm",
+        "axis_in_parent_frame": [
+          0.0336,
+          0.5,
+          0.8654
+        ],
+        "axis_in_child_frame": [
+          0.0351,
+          0.4878,
+          0.8722
+        ],
+        "tilt_from_z_degrees": [
+          30.07,
+          29.28
+        ],
+        "after_roll_axis_in_parent_frame": [
+          0.0336,
+          0.0,
+          0.9994
+        ],
+        "after_roll_axis_in_child_frame": [
+          0.0351,
+          0.0,
+          0.9994
+        ],
+        "first_component_variance_share": [
+          0.996,
+          0.996
+        ],
+        "max_bend_degrees": 93.9
+      },
+      "RightForeArm": {
+        "hinge_parent": "RightArm",
+        "axis_in_parent_frame": [
+          -0.103,
+          -0.4081,
+          0.9071
+        ],
+        "axis_in_child_frame": [
+          -0.1547,
+          -0.4431,
+          0.883
+        ],
+        "tilt_from_z_degrees": [
+          24.89,
+          27.99
+        ],
+        "after_roll_axis_in_parent_frame": [
+          -0.103,
+          -0.0,
+          0.9947
+        ],
+        "after_roll_axis_in_child_frame": [
+          -0.1547,
+          0.0,
+          0.988
+        ],
+        "first_component_variance_share": [
+          0.997,
+          0.997
+        ],
+        "max_bend_degrees": 96.9
+      }
+    },
+    "z_report": {
+      "before": {
+        "LeftArm": {
+          "mean": 0.56,
+          "max": 2.29
+        },
+        "LeftForeArm": {
+          "mean": 2.75,
+          "max": 45.19
+        },
+        "RightArm": {
+          "mean": 0.59,
+          "max": 2.23
+        },
+        "RightForeArm": {
+          "mean": 2.14,
+          "max": 39.49
+        }
+      },
+      "after": {
+        "LeftArm": {
+          "mean": 0.57,
+          "max": 2.12
+        },
+        "LeftForeArm": {
+          "mean": 1.61,
+          "max": 14.74
+        },
+        "RightArm": {
+          "mean": 0.51,
+          "max": 2.14
+        },
+        "RightForeArm": {
+          "mean": 2.11,
+          "max": 19.76
+        }
+      }
+    }
+  }
+}

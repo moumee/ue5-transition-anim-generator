@@ -1,0 +1,68 @@
+{
+  "purpose": "Numerical drift baseline for the default refined adapter (frame refinement + forearm twist transfer + input z clamp), not visual-quality approval",
+  "pipeline": "context_detail",
+  "target_placement": "endpoint_velocity",
+  "transition_frames": 20,
+  "model_files_sha256": {
+    "context_checkpoint": "6442ffc92ceaff3c3003569885d599abcf4a5b1e2365ddde96c99b338692c9da",
+    "context_statistics": "d11272e7b625f7175f358878aeb182c68ab89c26637288f8a83d33aadd0a5949",
+    "detail_checkpoint": "810c43420e93d3d02cbcd3ae7c733bad9b89e5150e2a9b3735be3c969f49e49a",
+    "detail_statistics": "b165bfddabaed759e7d09d14f5142c4396ff4f22a6d32801641a0998d782b665"
+  },
+  "input_sha256": [
+    "7a41f135e0f6ea92140afbcf065552648d0c755ebabd057851fd8060c3466411",
+    "7983ad999fabc02fb32785c43fa98870e434f212cbb0b398363693de47c72200"
+  ],
+  "frame_refinement": {
+    "file": "configs/manny_frame_refinement_v1.json",
+    "sha256": "d70af06c3d309f8683091d9f59709dfbb865d57029f735d55920d8200cb377cf",
+    "calibration_sha256": "f5f5b068c4cc82adbf4967521fe25a04157f2226c68dda1cfd0e7f1d3332aaba",
+    "calibration_sha256_variants": [
+      "f5f5b068c4cc82adbf4967521fe25a04157f2226c68dda1cfd0e7f1d3332aaba",
+      "1aa892791062f693ed1bbca6e23a676252e7a612ea7d2b4ec910b899128f3918"
+    ],
+    "roll_degrees": {
+      "LeftArm": -30.017,
+      "LeftForeArm": -29.218,
+      "RightArm": 24.22,
+      "RightForeArm": 26.649
+    }
+  },
+  "input_z_clamp": {
+    "limit": 3.0,
+    "joints": [
+      "LeftShoulder",
+      "LeftArm",
+      "LeftForeArm",
+      "LeftHand",
+      "RightShoulder",
+      "RightArm",
+      "RightForeArm",
+      "RightHand"
+    ]
+  },
+  "twist_transfer": {
+    "joints": [
+      "LeftForeArm",
+      "RightForeArm"
+    ]
+  },
+  "source": {
+    "model_source_commit": "3d2ba85e4678a5043d61b0be99763b086afa9dc4",
+    "vendor_manifest_sha256": "12c3373c29e84cd4ab17a067e7935e28abac282db1cc9ad4b8d16f8a59c4181e",
+    "adapter_sha256": "8e41ec553591b181da0e1cd394bb6d426d147f93c1a5bd915c32c71452117a12",
+    "architecture_sha256": {
+      "context": "a12279a65cb668429053c182f77dcfc406c12cf48efa614902e52f22db121289",
+      "detail": "adddc1f9acb823fc157814f43c6d1f6425806f3b40a4f9ade7e71775b0b62b0d"
+    },
+    "model_manifest_sha256": "acf6153923791400b8b9738fc77c71918595cde0e22fb0b72a149ff4bfb811bf",
+    "mapping_sha256": {
+      "official_context_preprocess.py": "2718df7ee5a4131e30f5c80c73af174b6f0fc06306d49d59da71921794bb7491",
+      "manny_lafan_transform.py": "29976f8df702e936eae33e0993a57e581c8ab29fa07d0a249131913eb81402c6"
+    }
+  },
+  "python": "3.11.9",
+  "torch": "2.11.0+cpu",
+  "numpy": "1.26.4",
+  "atol": 2e-05
+}

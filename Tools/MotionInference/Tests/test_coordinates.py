@@ -80,12 +80,14 @@ class GenerateCoordinateTests(unittest.TestCase):
         sp,sr=runtime.clips['start'][3][2:12],runtime.clips['start'][4][2:12]
         ep,er=runtime.clips['end'][3][2:4].copy(),runtime.clips['end'][4][2:4].copy()
         if policy!='preserve_exported':
-            # Analytic fixtures: heading difference is 0.6 - (-0.5) = 1.1.
-            step=yaw(1.1)@np.array([3.,-.2,1.1])
+            # Analytic fixtures: heading difference is 0.6 - (-0.5) = 1.1. endpoint_velocity keeps
+            # the exported target facing; continue_context turns it to the start heading.
+            step=np.array([3.,-.2,1.1]) if policy=='endpoint_velocity' else yaw(1.1)@np.array([3.,-.2,1.1])
             velocity=np.array([2.,.4])
             if policy=='endpoint_velocity':velocity=(velocity+step[[0,2]])/2
             target=sp[-1].copy();target[[0,2]]+=velocity*6;target[1]=ep[0,1]
-            ep=np.array([target,target+step]);er[:,0]=yaw(.6)@BASE
+            ep=np.array([target,target+step])
+            if policy=='continue_context':er[:,0]=yaw(.6)@BASE
         world_window=np.concatenate([sp,np.repeat(sp[-1:],n,axis=0),ep])
         center=np.array([sp[-1,0],0.,sp[-1,2]])
         expected_p=(yaw(-.6)@(world_window-center).T).T

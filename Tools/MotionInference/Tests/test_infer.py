@@ -5,13 +5,17 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 
 HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE))
-from infer import (Runtime, decode_rotations, generate, in_frame, place_target,
-                   run_request, save_json, slerp_matrix)
+from infer import (CALIBRATION_FILE, DEFAULT_FRAME_REFINEMENT, DEFAULT_INPUT_Z_CLAMP, DEFAULT_TWIST_TRANSFER, Runtime,
+                   blend_clamp_offsets, clamp_input_z, decode_rotations, rotation_degrees, file_hash, generate, in_frame, load_frame_refinement,
+                   parse_input_z_clamp, parse_twist_transfer, place_target, refine_rotations, roll_matrix, run_request,
+                   save_json, slerp_matrix, text_sha256_variants, transfer_twist, twist_angles, twist_curve)
+import infer
 from official_context_preprocess import (pack_state, project_static_channels, normalize,
                                        reverse_start_center_root, yaw_matrix)
 
@@ -53,6 +57,165 @@ class GeometryTests(unittest.TestCase):
         np.testing.assert_array_equal(c,ep);np.testing.assert_array_equal(d,er)
 
 
+def random_rotations(rng, shape):
+    q = rng.normal(size=shape + (4,))
+    q /= np.linalg.norm(q, axis=-1, keepdims=True)
+    x, y, z, w = np.moveaxis(q, -1, 0)
+    return np.stack([
+        np.stack([1-2*(y*y+z*z), 2*(x*y-z*w), 2*(x*z+y*w)], -1),
+        np.stack([2*(x*y+z*w), 1-2*(x*x+z*z), 2*(y*z-x*w)], -1),
+        np.stack([2*(x*z-y*w), 2*(y*z+x*w), 1-2*(x*x+y*y)], -1)], -2)
+
+
+class FrameRefinementTests(unittest.TestCase):
+    calibration = json.loads(CALIBRATION_FILE.read_text(encoding='utf-8'))
+
+    def test_refinement_equals_reexport_with_refined_calibration(self):
+        # Team mapper: local_j = (M_p B_p)^T (M_j B_j). With B' = B @ C it must equal refine_rotations.
+        rng = np.random.default_rng(3)
+        parents = self.calibration['parents']
+        M, B, C = random_rotations(rng, (4, 22)), random_rotations(rng, (22,)), random_rotations(rng, (22,))
+        C[0] = np.eye(3)
+        def locals_from(globals_):
+            return np.stack([globals_[:, j] if p < 0 else np.swapaxes(globals_[:, p], -1, -2) @ globals_[:, j]
+                             for j, p in enumerate(parents)], axis=1)
+        old = locals_from(M @ B)
+        new = locals_from(M @ B @ C)
+        np.testing.assert_allclose(refine_rotations(old, C, parents), new, atol=1e-12)
+        np.testing.assert_allclose(refine_rotations(new, C, parents, inverse=True), old, atol=1e-12)
+
+    def test_bundled_refinement_matches_committed_calibration(self):
+        recorded = json.loads(DEFAULT_FRAME_REFINEMENT.read_text(encoding='utf-8'))['calibration_sha256']
+        self.assertIn(recorded, text_sha256_variants(CALIBRATION_FILE))
+        frames, info = load_frame_refinement(DEFAULT_FRAME_REFINEMENT, self.calibration)
+        self.assertEqual(info['calibration_sha256'], recorded)
+        self.assertTrue(set(info['roll_degrees']) <= set(self.calibration['joint_order'][1:]))
+        np.testing.assert_allclose(frames[0], np.eye(3))
+        for name, degrees in info['roll_degrees'].items():
+            np.testing.assert_allclose(frames[self.calibration['joint_order'].index(name)], roll_matrix(degrees))
+
+    def test_calibration_line_endings_do_not_matter(self):
+        # core.autocrlf may check the calibration out with LF or CRLF; both must be accepted.
+        content = CALIBRATION_FILE.read_bytes().replace(b'\r\n', b'\n')
+        with tempfile.TemporaryDirectory(prefix='mib eol 한글 ') as folder:
+            for label, data in (('lf', content), ('crlf', content.replace(b'\n', b'\r\n'))):
+                with self.subTest(label=label):
+                    copy_path = Path(folder) / f'calibration_{label}.json'
+                    copy_path.write_bytes(data)
+                    with mock.patch.object(infer, 'CALIBRATION_FILE', copy_path):
+                        _, info = load_frame_refinement(DEFAULT_FRAME_REFINEMENT, self.calibration)
+                    self.assertEqual(set(info['calibration_sha256_variants']), set(text_sha256_variants(copy_path)))
+
+    def test_invalid_refinement_files_are_rejected(self):
+        document = json.loads(DEFAULT_FRAME_REFINEMENT.read_text(encoding='utf-8'))
+        cases = {
+            'schema': dict(document, schema='other'),
+            'joint order': dict(document, joint_order=list(reversed(document['joint_order']))),
+            'different calibration': dict(document, calibration_sha256='0' * 64),
+            'Invalid frame refinement joint': dict(document, roll_degrees={'Hips': 5.0}),
+            'finite': dict(document, roll_degrees={'LeftArm': float('inf')}),
+        }
+        with tempfile.TemporaryDirectory(prefix='mib refine 한글 ') as folder:
+            for message, payload in cases.items():
+                with self.subTest(message=message):
+                    path = Path(folder) / 'refinement.json'
+                    path.write_text(json.dumps(payload), encoding='utf-8')
+                    with self.assertRaisesRegex(ValueError, message):
+                        load_frame_refinement(path, self.calibration)
+
+    def test_clamp_offsets_are_blended_into_the_generated_segment(self):
+        # The model continues from clamped poses; restored originals must not create a jump at the joins.
+        rng = np.random.default_rng(7)
+        transition, joint = 6, 14
+        target = 10 + transition
+        original = random_rotations(rng, (target + 2, 22))
+        seen = original.copy()
+        seen[9, joint] = roll_matrix(20.0).T @ original[9, joint]
+        seen[target, joint] = roll_matrix(-12.0).T @ original[target, joint]
+        generated = original.copy()
+        for frame in range(10, target):
+            generated[frame, joint] = slerp_matrix(seen[9, joint], seen[target, joint], (frame - 9) / (transition + 1))
+        def steps(sequence):
+            return [rotation_degrees(a.T @ b) for a, b in zip(sequence[:-1], sequence[1:])]
+        model_step = max(steps(np.concatenate(
+            [seen[9:10, joint], generated[10:target, joint], seen[target:target + 1, joint]])))
+        joined = lambda rotations: np.concatenate(
+            [original[9:10, joint], rotations[10:target, joint], original[target:target + 1, joint]])
+        self.assertGreater(steps(joined(generated))[0], 19.0)            # the jump this fixes
+        blended, report = blend_clamp_offsets(generated, original, seen, [('LeftShoulder', joint)], transition)
+        # d(A·B, C·D) <= d(A, C) + d(B, D): each step grows by at most the offset change per frame.
+        offset_change = rotation_degrees(roll_matrix(20.0).T @ roll_matrix(-12.0)) / (transition + 1)
+        self.assertLessEqual(max(steps(joined(blended))), model_step + offset_change + 1e-6)
+        np.testing.assert_allclose(report['LeftShoulder'], [20.0, 12.0], atol=1e-6)
+        untouched = [j for j in range(22) if j != joint]
+        np.testing.assert_array_equal(blended[:, untouched], generated[:, untouched])
+
+    def test_input_clamp_only_touches_selected_joints(self):
+        names = self.calibration['joint_order']
+        clamp = parse_input_z_clamp(DEFAULT_INPUT_Z_CLAMP, names)
+        rng = np.random.default_rng(5)
+        mean, std = rng.normal(size=135), rng.uniform(.01, .5, size=135)
+        states = mean + rng.normal(scale=20, size=(12, 135)) * std
+        clamped, before = clamp_input_z(states, mean, std, clamp)
+        z = (clamped - mean) / std
+        selected = np.zeros(135, dtype=bool); selected[clamp['columns']] = True
+        self.assertLessEqual(np.abs(z[:, selected]).max(), clamp['limit'] + 1e-9)
+        np.testing.assert_array_equal(clamped[:, ~selected], states[:, ~selected])
+        np.testing.assert_allclose(before, np.abs((states - mean) / std)[:, selected])
+        for bad in ({'limit': 0, 'joints': ['LeftArm']}, {'limit': 3, 'joints': ['Hips']},
+                    {'limit': 3, 'joints': ['LeftArm', 'LeftArm']}, {'limit': 3}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                parse_input_z_clamp(bad, names)
+        self.assertIsNone(parse_input_z_clamp(None, names))
+
+
+def rz(degrees):
+    a = np.radians(degrees)
+    return np.array([[np.cos(a), -np.sin(a), 0.0], [np.sin(a), np.cos(a), 0.0], [0.0, 0.0, 1.0]])
+
+
+class TwistTransferTests(unittest.TestCase):
+    names = FrameRefinementTests.calibration['joint_order']
+    parents = FrameRefinementTests.calibration['parents']
+
+    def test_transfer_removes_roll_keeps_child_orientation_and_inverts(self):
+        rng = np.random.default_rng(11)
+        local = random_rotations(rng, (6, 22))
+        joint, child = self.names.index('LeftForeArm'), self.names.index('LeftHand')
+        bend, roll = rng.uniform(-120, 0, 6), rng.uniform(-80, 80, 6)
+        local[:, joint] = np.stack([rz(b) @ roll_matrix(r) for b, r in zip(bend, roll)])   # hinge, then roll
+        np.testing.assert_allclose(twist_angles(local, joint), roll, atol=1e-9)
+        angles = {joint: twist_angles(local, joint)}
+        moved = transfer_twist(local, [joint], self.parents, angles)
+        np.testing.assert_allclose(moved[:, joint], np.stack([rz(b) for b in bend]), atol=1e-12)
+        np.testing.assert_allclose(moved[:, joint] @ moved[:, child], local[:, joint] @ local[:, child], atol=1e-12)
+        untouched = [j for j in range(22) if j not in (joint, child)]
+        np.testing.assert_array_equal(moved[:, untouched], local[:, untouched])
+        np.testing.assert_allclose(transfer_twist(moved, [joint], self.parents, angles, inverse=True), local, atol=1e-12)
+
+    def test_twist_curve_keeps_known_frames_and_continues_their_speed(self):
+        n = 8
+        target = 10 + n
+        steady = 10.0 + 3.0 * np.arange(12 + n)        # constant twist speed through the whole window
+        measured = steady.copy()
+        measured[10:target] = measured[9]              # unknown frames hold placeholders
+        np.testing.assert_allclose(twist_curve(measured, n), steady, atol=1e-9)
+        wrapped = np.full(12 + n, 170.0)
+        wrapped[target:] = -170.0                      # 20 degrees across the +-180 seam
+        curve = twist_curve(wrapped, n)
+        self.assertAlmostEqual(curve[target] - curve[9], 20.0)
+        self.assertTrue(np.all(np.diff(curve[9:target + 1]) >= 0))
+
+    def test_twist_transfer_settings_are_validated(self):
+        parsed = parse_twist_transfer(DEFAULT_TWIST_TRANSFER, self.names)
+        self.assertEqual(parsed['indices'], [self.names.index(n) for n in DEFAULT_TWIST_TRANSFER['joints']])
+        self.assertIsNone(parse_twist_transfer(None, self.names))
+        for bad in ({'joints': []}, {'joints': ['Hips']}, {'joints': ['LeftForeArm', 'LeftForeArm']},
+                    {'joint': ['LeftForeArm']}, {'joints': ['LeftForeArm'], 'limit': 3}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                parse_twist_transfer(bad, self.names)
+
+
 CONFIG = os.environ.get('MIB_MODEL_CONFIG')
 
 
@@ -83,16 +246,64 @@ class ModelTests(unittest.TestCase):
                 contacts=np.array(result['inference']['diagnostics']['generated_contacts'])
                 self.assertEqual(contacts.shape,(n,4));self.assertTrue(((contacts>=0)&(contacts<=1)).all())
 
-    def test_default_context_detail_numerical_baseline(self):
-        if self.runtime.pipeline!='context_detail' or self.runtime.placement!='endpoint_velocity':
+    def runtime_with(self, **overrides):
+        config=copy.deepcopy(self.runtime.config)
+        config.update({key:str(value) for key,value in self.runtime.files.items()})
+        config.update(overrides)
+        path=self.directory/'config.json';save_json(path,config)
+        return Runtime(path)
+
+    def check_baseline(self, runtime, fixture):
+        if runtime.pipeline!='context_detail' or runtime.placement!='endpoint_velocity':
             self.skipTest('Baseline is specific to the default Context + Detail endpoint_velocity pipeline.')
-        meta=json.loads((HERE/'Tests/Fixtures/context_detail_baseline.json').read_text(encoding='utf-8'))
-        self.assertEqual(meta['model_files_sha256'],self.runtime.hashes)
-        from infer import file_hash
+        meta=json.loads((HERE/f'Tests/Fixtures/{fixture}.json').read_text(encoding='utf-8'))
+        self.assertEqual(meta['model_files_sha256'],runtime.hashes)
         self.assertEqual(meta['input_sha256'],[file_hash(self.start),file_hash(self.end)])
-        expected=np.load(HERE/'Tests/Fixtures/context_detail_baseline.npz',allow_pickle=False)['states']
-        actual=generate(self.runtime,self.start,self.end,20)['predictions_tx135']
-        np.testing.assert_allclose(actual,expected,rtol=0,atol=2e-5)
+        expected=np.load(HERE/f'Tests/Fixtures/{fixture}.npz',allow_pickle=False)['states']
+        actual=generate(runtime,self.start,self.end,20)['predictions_tx135']
+        np.testing.assert_allclose(actual,expected,rtol=0,atol=meta['atol'])
+
+    def test_legacy_settings_reproduce_original_baseline(self):
+        # frame_refinement/input_z_clamp/twist_transfer = null must reproduce the refinement-free adapter exactly.
+        self.check_baseline(self.runtime_with(frame_refinement=None,input_z_clamp=None,twist_transfer=None),'context_detail_baseline')
+
+    def test_default_refined_numerical_baseline(self):
+        if any(key in self.runtime.config for key in ('frame_refinement','input_z_clamp','twist_transfer')):
+            self.skipTest('The refined baseline uses the built-in refinement, clamp and twist defaults.')
+        self.check_baseline(self.runtime,'refined_context_detail_baseline')
+
+    def test_refinement_keeps_known_frames_and_reports_settings(self):
+        result=generate(self.runtime,self.start,self.end,20)
+        inference=result['inference']
+        self.assertEqual(inference['diagnostics']['context_max_abs_error'],0)
+        self.assertEqual(inference['diagnostics']['target_max_abs_error'],0)
+        if self.runtime.refine is not None:
+            self.assertEqual(inference['frame_refinement']['sha256'],self.runtime.refinement_info['sha256'])
+        if self.runtime.clamp is not None:
+            report=inference['diagnostics']['input_z_clamp']
+            self.assertEqual(set(report['clamped_known_values']),set(self.runtime.clamp['joints']))
+        if self.runtime.twist is not None:
+            self.assertEqual(inference['twist_transfer'],{'joints':self.runtime.twist['joints']})
+            self.assertEqual(set(inference['diagnostics']['twist_transfer_degrees']),set(self.runtime.twist['joints']))
+
+    def test_inputs_exported_with_either_line_ending_are_accepted(self):
+        if self.runtime.refine is None:
+            self.skipTest('Frame refinement disabled in this configuration.')
+        document=json.loads(self.start.read_text(encoding='utf-8'))
+        for recorded in text_sha256_variants(CALIBRATION_FILE):
+            with self.subTest(recorded=recorded[:8]):
+                document['mapping_source_sha256'][CALIBRATION_FILE.name]=recorded
+                path=self.directory/f'start_{recorded[:8]}.json';save_json(path,document)
+                self.assertEqual(generate(self.runtime,path,self.end,5)['frame_count'],16)
+
+    def test_input_from_other_calibration_is_rejected_when_refined(self):
+        if self.runtime.refine is None:
+            self.skipTest('Frame refinement disabled in this configuration.')
+        document=json.loads(self.start.read_text(encoding='utf-8'))
+        document.setdefault('mapping_source_sha256',{})[CALIBRATION_FILE.name]='0'*64
+        path=self.directory/'other_calibration.json';save_json(path,document)
+        with self.assertRaisesRegex(ValueError,'different calibration'):
+            generate(self.runtime,path,self.end,20)
 
     def normalized(self,path,dest):
         document=json.loads(path.read_text(encoding='utf-8'))
