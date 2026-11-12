@@ -26,6 +26,9 @@ from official_context_preprocess import (
 from manny_lafan_transform import matrix6d_to_9d, matrix_to_quat_xyzw, quat_to_matrix
 
 SUPPORTED_TRANSITION_RANGE = (5, 45)  # Product policy; not a positional-table limit.
+# A pinned long-transition model (model_manifest.json "long_transition_model") raises the upper
+# bound to its trained range. Requests are pre-checked against this absolute bound.
+MAX_TRANSITION_ANY_MODEL = 60
 
 CALIBRATION_FILE = PROJECT / "Tools/MannyLafanMapping/rest_pose_corrections_22_prototype.json"
 # Model-frame refinement: per-joint roll about the bone axis (+X) on top of the
@@ -297,7 +300,9 @@ class Runtime:
                                          self.calibration["joint_order"])
         self.twist = parse_twist_transfer(self.config.get("twist_transfer", DEFAULT_TWIST_TRANSFER),
                                           self.calibration["joint_order"])
-        pinned = load_model_output(HERE / "model_manifest.json")["files"]
+        manifest = load_model_output(HERE / "model_manifest.json")
+        pinned = manifest["files"]
+        self.model_types = (ContextTransformer, DetailTransformer)
         self.files, self.hashes = {}, {}
         required = ["context_checkpoint", "context_statistics"]
         if self.pipeline == "context_detail":
@@ -321,8 +326,9 @@ class Runtime:
         self.static_joints = np.flatnonzero(mask.all(axis=1))
         self.context_config = load_model_output(HERE / "configs/context.json")
         self.indices = self.context_config["indices"]
-        self.context = self._load(ContextTransformer, self.context_config, "context_checkpoint")
+        self.context = self._load(ContextTransformer, self.context_config, self.files["context_checkpoint"])
         self.detail = None
+        self.detail_config = None
         self.detail_mean = self.detail_std = None
         if self.pipeline == "context_detail":
             with self.files["detail_statistics"].open("rb") as stream:
@@ -335,13 +341,60 @@ class Runtime:
             cfg = load_model_output(HERE / "configs/detail.json")
             if cfg["indices"] != self.indices:
                 raise ValueError("Context/Detail state layouts differ.")
-            self.detail = self._load(DetailTransformer, cfg, "detail_checkpoint")
+            self.detail_config = cfg
+            self.detail = self._load(DetailTransformer, cfg, self.files["detail_checkpoint"])
+        self.transition_range = SUPPORTED_TRANSITION_RANGE
+        self.long = self._load_long_model(manifest.get("long_transition_model"))
 
-    def _load(self, model_type, config, key):
-        checkpoint = self.torch.load(self.files[key], map_location="cpu", weights_only=True)
+    def _load(self, model_type, config, path):
+        checkpoint = self.torch.load(path, map_location="cpu", weights_only=True)
         model = model_type(config["model"])
         model.load_state_dict(checkpoint["model"], strict=True)
         return model.eval()
+
+    def _load_long_model(self, entry):
+        """Optional second Context/Detail pair used for transitions of min_transition frames or more.
+
+        It shares the pinned official statistics (the long model was trained with the same
+        training-only normalization), so the refinement, clamp and twist settings apply unchanged.
+        Omitted or null keeps the single official model and the 5..45 range.
+        """
+        value = self.config.get("long_transition_model")
+        if value is None:
+            return None
+        if not isinstance(entry, dict):
+            raise ValueError("model_manifest.json pins no long_transition_model.")
+        keys = ["context_checkpoint"] + (["detail_checkpoint"] if self.pipeline == "context_detail" else [])
+        if not isinstance(value, dict) or set(value) != {"min_transition", *keys}:
+            raise ValueError("long_transition_model must be null or an object with min_transition and "
+                             + " and ".join(keys) + ".")
+        high = integer(entry.get("max_transition"), "long_transition_model.max_transition",
+                       SUPPORTED_TRANSITION_RANGE[1], MAX_TRANSITION_ANY_MODEL)
+        threshold = integer(value["min_transition"], "long_transition_model.min_transition",
+                            SUPPORTED_TRANSITION_RANGE[0] + 1, high)
+        files, hashes = {}, {}
+        for key in keys:
+            if not isinstance(value[key], str) or not value[key]:
+                raise ValueError(f"Missing long_transition_model.{key}")
+            path = (self.config_path.parent / value[key]).resolve()
+            if not path.is_file():
+                raise ValueError(f"Missing long_transition_model.{key}: {path}")
+            actual = file_hash(path)
+            if actual != entry["files"][key]["sha256"]:
+                raise ValueError(f"long_transition_model.{key} SHA-256 does not match the pinned long model.")
+            files[key], hashes[key] = path, actual
+        context_type, detail_type = self.model_types
+        context = self._load(context_type, self.context_config, files["context_checkpoint"])
+        detail = None if self.detail is None else self._load(detail_type, self.detail_config, files["detail_checkpoint"])
+        self.transition_range = (SUPPORTED_TRANSITION_RANGE[0], high)
+        return {"name": entry["name"], "min_transition": threshold, "context": context, "detail": detail,
+                "files": files, "hashes": {**self.hashes, **hashes}}
+
+    def model_for(self, transition):
+        """(name, context, detail, file hashes) of the model pair used for this transition length."""
+        if self.long is not None and transition >= self.long["min_transition"]:
+            return self.long["name"], self.long["context"], self.long["detail"], self.long["hashes"]
+        return "official_release", self.context, self.detail, self.hashes
 
     def input(self, path):
         calibration = load_model_output(PROJECT / "Tools/MannyLafanMapping/rest_pose_corrections_22_prototype.json")
@@ -384,17 +437,18 @@ class Runtime:
         mean_ctx, std_ctx = (torch.tensor(v, dtype=torch.float32) for v in (self.mean, self.std))
         device = position_tensor.device
         mask_ctx = context.get_attention_mask(len(states), 10, target, device)
+        model_name, context_model, detail_model, model_hashes = self.model_for(transition)
         contacts = None
         if self.pipeline == "context":
             new_pos, new_rot = context.evaluate(
-                model=self.context, positions=position_tensor, rotations=rotation_tensor,
+                model=context_model, positions=position_tensor, rotations=rotation_tensor,
                 seq_slice=slice(10, target), indices=self.indices, mean=mean_ctx, std=std_ctx,
                 atten_mask=mask_ctx, post_process=post_process)
         else:
             if not post_process:
                 raise ValueError("The Detail pipeline uses Context and Detail post_process=True.")
             new_pos, new_rot, contacts = detail.evaluate(
-                detail_model=self.detail, context_model=self.context, positions=position_tensor,
+                detail_model=detail_model, context_model=context_model, positions=position_tensor,
                 rotations=rotation_tensor, foot_contact=torch.zeros(1, len(states), 4, dtype=position_tensor.dtype, device=device),
                 seq_slice=slice(10, target), indices=self.indices, mean_ctx=mean_ctx, std_ctx=std_ctx,
                 mean_state=torch.tensor(self.detail_mean, dtype=torch.float32),
@@ -420,6 +474,7 @@ class Runtime:
                 "std": float(self.std[channel]), "signed_z": float(z[frame, channel])},
             "generated_contacts": None if contacts is None else contacts[0, 10:target].tolist(),
             "input_z_clamp": clamp_report,
+            "model": {"name": model_name, "files_sha256": model_hashes},
         }
 
 
@@ -494,7 +549,7 @@ def slerp_matrix(a, b, weight):
 
 
 def generate(runtime, start_path, end_path, transition, start_index=None, target_index=0):
-    integer(transition, "transition_frames", *SUPPORTED_TRANSITION_RANGE)
+    integer(transition, "transition_frames", *getattr(runtime, "transition_range", SUPPORTED_TRANSITION_RANGE))
     start, sp, sr = runtime.input(start_path)
     end, ep, er = runtime.input(end_path)
     start_index = len(sp) - 10 if start_index is None else start_index
@@ -585,7 +640,11 @@ def generate(runtime, start_path, end_path, transition, start_index=None, target
             "frame_refinement": refinement_info,
             "input_z_clamp": None if clamp is None else {"limit": clamp["limit"], "joints": clamp["joints"]},
             "twist_transfer": None if twist is None else {"joints": twist["joints"]},
-            "model_files_sha256": runtime.hashes, "source": runtime.provenance, "config_snapshot": runtime.config,
+            "model": diagnostics.get("model", {}).get("name", "official_release"),
+            "model_files_sha256": diagnostics.get("model", {}).get("files_sha256", runtime.hashes),
+            "long_transition_model": None if getattr(runtime, "long", None) is None else
+                {"name": runtime.long["name"], "min_transition": runtime.long["min_transition"]},
+            "source": runtime.provenance, "config_snapshot": runtime.config,
             "config_sha256": file_hash(runtime.config_path), "python": sys.version.split()[0],
             "torch": runtime.torch.__version__, "numpy": np.__version__, "diagnostics": diagnostics}}
 
@@ -597,7 +656,9 @@ def run_request(request_path):
         raise ValueError("Unsupported request schema.")
     if not isinstance(request.get("request_id"), str) or not request["request_id"]:
         raise ValueError("Missing request_id.")
-    transition = integer(request.get("transition_frames"), "transition_frames", *SUPPORTED_TRANSITION_RANGE)
+    # Pre-check against the widest pinned range; the loaded runtime enforces its own range below.
+    transition = integer(request.get("transition_frames"), "transition_frames",
+                         SUPPORTED_TRANSITION_RANGE[0], MAX_TRANSITION_ANY_MODEL)
     if type(request.get("sample_rate_hz")) not in (int, float) or request["sample_rate_hz"] != 30:
         raise ValueError("sample_rate_hz must be 30.")
     integer(request.get("context_frames"), "context_frames", 10, 10)
@@ -616,6 +677,9 @@ def run_request(request_path):
         if file_hash(paths[key]) != request.get("source_sha256", {}).get(label):
             raise ValueError(f"{label} input SHA-256 differs from the request.")
     runtime = Runtime(paths["model_config_file"])
+    if not runtime.transition_range[0] <= transition <= runtime.transition_range[1]:
+        raise ValueError(f"transition_frames must be in {runtime.transition_range[0]}..{runtime.transition_range[1]} "
+                         "for this model config (longer transitions need long_transition_model).")
     result = generate(runtime, paths["start_input_file"], paths["end_input_file"], transition,
                       start_index=request.get("start_context_start_index"), target_index=request.get("end_target_index"))
     result["inference_request_id"] = request["request_id"]
@@ -635,7 +699,8 @@ def main():
     except Exception as error:
         print(f"Inference failed: {error}", file=sys.stderr)
         return 1
-    print(json.dumps({"success": True, "pipeline": result["inference"]["pipeline"], "frame_count": result["frame_count"]}))
+    print(json.dumps({"success": True, "pipeline": result["inference"]["pipeline"], "model": result["inference"]["model"],
+                      "frame_count": result["frame_count"]}))
     return 0
 
 

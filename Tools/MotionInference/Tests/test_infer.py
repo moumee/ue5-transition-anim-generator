@@ -249,6 +249,8 @@ class ModelTests(unittest.TestCase):
     def runtime_with(self, **overrides):
         config=copy.deepcopy(self.runtime.config)
         config.update({key:str(value) for key,value in self.runtime.files.items()})
+        if self.runtime.long is not None:
+            config['long_transition_model'].update({key:str(value) for key,value in self.runtime.long['files'].items()})
         config.update(overrides)
         path=self.directory/'config.json';save_json(path,config)
         return Runtime(path)
@@ -262,6 +264,35 @@ class ModelTests(unittest.TestCase):
         expected=np.load(HERE/f'Tests/Fixtures/{fixture}.npz',allow_pickle=False)['states']
         actual=generate(runtime,self.start,self.end,20)['predictions_tx135']
         np.testing.assert_allclose(actual,expected,rtol=0,atol=meta['atol'])
+
+    def test_long_transition_model_dispatch(self):
+        long_files={key:HERE/'models/range60_scratch_20261006'/entry['filename'] for key,entry in
+                    json.loads((HERE/'model_manifest.json').read_text(encoding='utf-8'))['long_transition_model']['files'].items()}
+        if self.runtime.pipeline!='context_detail' or not all(path.is_file() for path in long_files.values()):
+            self.skipTest('Long-transition weights are not under models/range60_scratch_20261006.')
+        single=self.runtime_with(long_transition_model=None)
+        self.assertEqual(single.transition_range,(5,45))
+        with self.assertRaisesRegex(ValueError,'transition_frames'):
+            generate(single,self.start,self.end,46)
+        runtime=self.runtime_with(long_transition_model=dict(min_transition=31,**{k:str(v) for k,v in long_files.items()}))
+        self.assertEqual(runtime.transition_range,(5,60))
+        for n,expected in ((20,'official_release'),(30,'official_release'),(31,'range60_scratch_20261006'),(60,'range60_scratch_20261006')):
+            with self.subTest(n=n):
+                result=generate(runtime,self.start,self.end,n)
+                inference=result['inference']
+                self.assertEqual(inference['model'],expected)
+                self.assertEqual(result['frame_count'],11+n)
+                self.assertTrue(np.isfinite(result['predictions_tx135']).all())
+                self.assertEqual(inference['diagnostics']['context_max_abs_error'],0)
+                self.assertEqual(inference['diagnostics']['target_max_abs_error'],0)
+        np.testing.assert_array_equal(generate(runtime,self.start,self.end,20)['predictions_tx135'],
+                                      generate(single,self.start,self.end,20)['predictions_tx135'])
+        with self.assertRaisesRegex(ValueError,'transition_frames'):
+            generate(runtime,self.start,self.end,61)
+        bad=dict(min_transition=31,**{k:str(v) for k,v in long_files.items()})
+        bad['context_checkpoint']=str(self.runtime.files['context_checkpoint'])
+        with self.assertRaisesRegex(ValueError,'pinned long model'):
+            self.runtime_with(long_transition_model=bad)
 
     def test_legacy_settings_reproduce_original_baseline(self):
         # frame_refinement/input_z_clamp/twist_transfer = null must reproduce the refinement-free adapter exactly.
@@ -349,7 +380,8 @@ class ModelTests(unittest.TestCase):
             Runtime(path)
 
     def test_unsupported_length_and_missing_next_target_fail(self):
-        for n in (True,4,46,54,240):
+        high=self.runtime.transition_range[1]
+        for n in (True,4,high+1,high+9,240):
             with self.subTest(n=n),self.assertRaisesRegex(ValueError,'transition_frames'):
                 generate(self.runtime,self.start,self.end,n)
         end=json.loads(self.end.read_text(encoding='utf-8'))

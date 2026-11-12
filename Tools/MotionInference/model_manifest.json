@@ -21,5 +21,22 @@
       "sha256": "b165bfddabaed759e7d09d14f5142c4396ff4f22a6d32801641a0998d782b665",
       "bytes": 4614
     }
+  },
+  "long_transition_model": {
+    "name": "range60_scratch_20261006",
+    "description": "Team-trained Context/Detail with the original paper losses, trained from scratch on transitions 5-60 (Context best_long 160k / Detail best_long 1.04M of 181k / 1.43M). Uses the official training statistics. LAFAN benchmark vs official: better at 36-60 frames, worse at 5/15, equal at 30.",
+    "max_transition": 60,
+    "files": {
+      "context_checkpoint": {
+        "filename": "context_best_long_160k.pth",
+        "sha256": "c841429f7858c7b3ef2ae13e11742f5058c251094b8971c80e11dd1bee2b5b81",
+        "bytes": 124811589
+      },
+      "detail_checkpoint": {
+        "filename": "detail_best_long_1040k.pth",
+        "sha256": "63ff49541ce4de06d88e201b85e6c2c27c5209b1bcb4e152d758f50a9d163fdf",
+        "bytes": 121659701
+      }
+    }
   }
 }

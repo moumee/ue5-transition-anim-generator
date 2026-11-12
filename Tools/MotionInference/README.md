@@ -19,6 +19,31 @@ python -m pip install -r requirements.txt
 
 `model_config.example.json`을 `model_config.local.json`으로 복사하고 경로를 지정합니다. 상대 경로는 **설정 파일의 폴더 기준**입니다. 진입점은 `model_manifest.json`의 파일 SHA-256과 대조한 뒤 가중치·통계를 읽고, 모델 형상은 strict 모드로 확인합니다. 가중치·개인 설정은 Git에 포함하지 않습니다. 공식 모델과 다른 후보는 설정의 경로만 바꿔 암묵적으로 수용하지 않으며 별도 버전·통계·검증이 필요합니다.
 
+### 긴 전환 모델 (선택)
+
+공식 모델은 5~45프레임만 받습니다. 팀이 학습한 `range60_scratch_20261006`(원 논문 loss 유지, 전환 5~60으로 처음부터 학습, Context best_long 16만 / Detail best_long 104만 회)을 `long_transition_model`로 붙이면 전환 길이가 `min_transition` 이상일 때 이 모델을 쓰고 상한이 60으로 늘어납니다. 해시는 `model_manifest.json`의 `long_transition_model`에 고정되어 있고, 통계는 공식 통계를 그대로 씁니다(같은 학습 데이터·같은 값). 보정·클램프·비틀림 이동도 그대로 적용됩니다. 가중치는 `models/range60_scratch_20261006/`에 `context_best_long_160k.pth`, `detail_best_long_1040k.pth`로 둡니다. 설정 예시는 `model_config.long.example.json`입니다.
+
+```json
+"long_transition_model": {
+  "min_transition": 46,
+  "context_checkpoint": "models/range60_scratch_20261006/context_best_long_160k.pth",
+  "detail_checkpoint": "models/range60_scratch_20261006/detail_best_long_1040k.pth"
+}
+```
+
+생략하거나 `null`이면 공식 모델만 쓰고 결과는 이전과 같습니다. 출력의 `inference.model`에 실제로 쓴 모델 이름이, `inference.model_files_sha256`에 그 모델의 파일 해시가 기록됩니다.
+
+기본 문턱을 31이 아니라 46으로 둔 이유는 Manny 측정 결과입니다. LAFAN benchmark에서는 range60이 36~60프레임에서 공식 모델보다 좋았지만(위치 오차 −7~−28%), Idle_Walk_Jog 전환 6개(보정·클램프·비틀림 이동 켬)에서는 아래처럼 섞인 결과가 나왔습니다. 그래서 공식 모델이 지원하는 45까지는 공식 모델을 쓰고, 46~60만 range60에 맡깁니다.
+
+| N | 모델 | 튐 관절·프레임 수 | 발 미끄러짐 cm/프레임 | 경계 루트 보정 cm |
+| --- | --- | --- | --- | --- |
+| 20 | 공식 / range60 | 7 / 7 | 2.06 / 2.71 | 0.68 / 0.74 |
+| 30 | 공식 / range60 | 13 / 8 | 1.28 / 2.14 | 0.72 / 1.15 |
+| 45 | 공식 / range60 | 11 / 21 | 2.19 / 2.01 | 1.58 / 2.31 |
+| 60 | range60 | 14 | 2.02 | 3.72 |
+
+튐은 부모 기준 관절 각가속도가 두 원본 클립 최대값의 2배(최소 4°/프레임²)를 넘는 관절·프레임 수입니다(프레임 9~목표). `docs/frame_refinement.md` 4.3의 수치와는 계산 방식이 달라 직접 비교하지 않습니다.
+
 추론 함수와 모델 클래스는 `vendor/`에 원본 그대로 보관했습니다. 팀 소스 `3d2ba85e4678a5043d61b0be99763b086afa9dc4`, 상류 `fa9b6dc5f0791fd28bfccb6783e6bfd26d578515`를 기준으로 하며 변경은 학습/손실 경로에 한정되고 이 버전의 추론 함수는 상류와 같습니다. 원본 MIT 고지와 파일 해시는 `vendor/LICENSE.txt`, `vendor/source_manifest.json`에 있습니다. 학습용 Config·통계 생성·체크포인트 로더는 호출하지 않습니다.
 
 ## Unreal에서 사용
