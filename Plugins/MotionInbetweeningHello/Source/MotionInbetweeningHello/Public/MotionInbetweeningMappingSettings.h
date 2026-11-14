@@ -10,6 +10,7 @@ class UMotionInbetweeningMappingSettings : public UDeveloperSettings
 {
 	GENERATED_BODY()
 public:
+	virtual bool SupportsAutoRegistration() const override { return false; }
 	virtual FName GetContainerName() const override { return TEXT("Project"); }
 	virtual FName GetCategoryName() const override { return TEXT("Plugins"); }
 	virtual FName GetSectionName() const override { return TEXT("MannyInputMapping"); }

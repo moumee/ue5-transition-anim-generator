@@ -23,7 +23,17 @@ public class MotionInbetweeningHello : ModuleRules
 			"Settings",
 			"Projects",
 			"Json",
-			"PythonScriptPlugin"
+			"PythonScriptPlugin",
+			"AnimGraph",
+			"BlueprintGraph",
+			"Kismet",
+			"KismetCompiler",
+			"PropertyEditor",
+            "MotionTransitionRuntime",
+            "AnimGraphRuntime",
+            "InputCore",
+            "RenderCore",
+            "RHI"
 		});
 		RuntimeDependencies.Add("$(PluginDir)/Scripts/*.py", StagedFileType.NonUFS);
 	}
