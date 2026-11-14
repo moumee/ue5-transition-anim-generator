@@ -5,6 +5,8 @@
 #include "MotionInbetweeningMapping.h"
 #include "MotionInbetweeningOutputMapping.h"
 #include "MotionInbetweeningInference.h"
+#include "MotionInbetweeningPlayback.h"
+#include "MotionTransitionEditor.h"
 #include "DesktopPlatformModule.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Misc/Paths.h"
@@ -38,6 +40,7 @@ void FMotionInbetweeningHelloModule::StartupModule()
 
 void FMotionInbetweeningHelloModule::ShutdownModule()
 {
+	MotionInbetweening::ShutdownTransitionEditor();
 	MotionInbetweening::CancelMannyInference();
 	MotionInbetweening::ShutdownMannyInputMapping();
 	MotionInbetweening::CancelMannyOutputMapping();
@@ -50,70 +53,13 @@ void FMotionInbetweeningHelloModule::ShutdownModule()
 
 void FMotionInbetweeningHelloModule::RegisterMenus()
 {
-	FToolMenuOwnerScoped OwnerScoped(this);
-	UToolMenu* ToolsMenu = UToolMenus::Get()->ExtendMenu("LevelEditor.MainMenu.Tools");
-	FToolMenuSection& Section = ToolsMenu->FindOrAddSection("MotionInbetweeningHello");
-	Section.AddMenuEntry(
-		"MotionInbetweeningHello.Test",
-		LOCTEXT("TestMenuLabel", "Motion In-betweening Plugin Test"),
-		LOCTEXT("TestMenuTooltip", "Show a test notification and write a message to the Output Log."),
-		FSlateIcon(),
-		FUIAction(FExecuteAction::CreateRaw(this, &FMotionInbetweeningHelloModule::ExecuteTestCommand)));
-	Section.AddMenuEntry(
-		"MotionInbetweeningHello.GenerateMannyAnimation",
-		LOCTEXT("GenerateMenuLabel", "Generate Manny Test Animation"),
-		LOCTEXT("GenerateMenuTooltip", "Create and save a new 2-second Manny animation from test data, then open its preview."),
-		FSlateIcon(),
-		FUIAction(FExecuteAction::CreateRaw(this, &FMotionInbetweeningHelloModule::ExecuteGenerateAnimationCommand)));
-	Section.AddMenuEntry(
-		"MotionInbetweeningHello.ExportMannyInput",
-		LOCTEXT("ExportMannyInputLabel", "Export Selected Manny Model Input"),
-		LOCTEXT("ExportMannyInputTooltip", "Export the selected Manny Animation Sequence through the team's input mapper. This prepares model input; it does not generate a transition."),
-		FSlateIcon(),
-		FUIAction(FExecuteAction::CreateRaw(this, &FMotionInbetweeningHelloModule::ExecuteExportMannyInputCommand),
-			FCanExecuteAction::CreateLambda([] { return !MotionInbetweening::IsMannyInputMappingRunning(); })));
-	Section.AddMenuEntry(
-		"MotionInbetweeningHello.MappingSettings",
-		LOCTEXT("MappingSettingsLabel", "Motion In-betweening Settings"),
-		LOCTEXT("MappingSettingsTooltip", "Set the Python executable, optional model statistics, and input sampling options."),
-		FSlateIcon(), FUIAction(FExecuteAction::CreateRaw(this, &FMotionInbetweeningHelloModule::ExecuteMappingSettingsCommand)));
-	Section.AddMenuEntry(
-		"MotionInbetweeningHello.ImportMannyOutput",
-		LOCTEXT("ImportMannyOutputLabel", "Import Model Output as Manny Animation"),
-		LOCTEXT("ImportMannyOutputTooltip", "Select a model-output JSON, restore its Manny pose, save a new Animation Sequence and open the preview."),
-		FSlateIcon(), FUIAction(FExecuteAction::CreateRaw(this, &FMotionInbetweeningHelloModule::ExecuteImportMannyOutputCommand),
-			FCanExecuteAction::CreateLambda([] { return !MotionInbetweening::IsMannyOutputMappingRunning() && !MotionInbetweening::IsMannyInferenceRunning(); })));
-	Section.AddMenuEntry(
-		"MotionInbetweeningHello.RunInference",
-		LOCTEXT("RunInferenceLabel", "Generate Manny Transition from Model Inputs"),
-		LOCTEXT("RunInferenceTooltip", "Choose start and destination model_input.json files, run the configured model, and save its Manny animation."),
-		FSlateIcon(), FUIAction(FExecuteAction::CreateRaw(this, &FMotionInbetweeningHelloModule::ExecuteMannyInferenceCommand),
-			FCanExecuteAction::CreateLambda([] { return !MotionInbetweening::IsMannyInferenceRunning() && !MotionInbetweening::IsMannyOutputMappingRunning(); })));
-	Section.AddMenuEntry(
-		"MotionInbetweeningHello.CancelInference",
-		LOCTEXT("CancelInferenceLabel", "Cancel Manny Transition Generation"),
-		LOCTEXT("CancelInferenceTooltip", "Stop the current inference process tree or its output import."),
-		FSlateIcon(), FUIAction(FExecuteAction::CreateStatic(&MotionInbetweening::CancelMannyInference),
-			FCanExecuteAction::CreateStatic(&MotionInbetweening::IsMannyInferenceRunning)));
-	Section.AddMenuEntry(
-		"MotionInbetweeningHello.OpenInferenceJob",
-		LOCTEXT("OpenInferenceJobLabel", "Open Last Manny Transition Job"),
-		LOCTEXT("OpenInferenceJobTooltip", "Open the request, model logs and final import receipt."),
-		FSlateIcon(), FUIAction(FExecuteAction::CreateLambda([] {
-			FPlatformProcess::ExploreFolder(*MotionInbetweening::GetLastInferenceResult().OutputDirectory);
-		}), FCanExecuteAction::CreateLambda([] { return !MotionInbetweening::GetLastInferenceResult().OutputDirectory.IsEmpty(); })));
-	Section.AddMenuEntry(
-		"MotionInbetweeningHello.CancelOutputMapping",
-		LOCTEXT("CancelOutputMappingLabel", "Cancel Manny Output Import"),
-		LOCTEXT("CancelOutputMappingTooltip", "Stop the active model-output conversion before asset creation."),
-		FSlateIcon(), FUIAction(FExecuteAction::CreateStatic(&MotionInbetweening::CancelMannyOutputMapping),
-			FCanExecuteAction::CreateLambda([] { return MotionInbetweening::IsMannyOutputMappingRunning() && !MotionInbetweening::IsMannyInferenceRunning(); })));
-	Section.AddMenuEntry(
-		"MotionInbetweeningHello.CancelMapping",
-		LOCTEXT("CancelMappingLabel", "Cancel Manny Input Export"),
-		LOCTEXT("CancelMappingTooltip", "Stop the active input-mapping process."),
-		FSlateIcon(), FUIAction(FExecuteAction::CreateStatic(&MotionInbetweening::CancelMannyInputMapping),
-			FCanExecuteAction::CreateStatic(&MotionInbetweening::IsMannyInputMappingRunning)));
+    FToolMenuOwnerScoped OwnerScoped(this);
+    auto* Menu = UToolMenus::Get()->ExtendMenu("LevelEditor.MainMenu.Tools");
+    auto& Section = Menu->FindOrAddSection("MotionInbetweeningHello");
+    Section.AddMenuEntry("MotionInbetweeningHello.TransitionEditor",
+        LOCTEXT("TransitionEditorLabel", "Motion Transition Editor"),
+        LOCTEXT("TransitionEditorTip", "Select motions, connect transitions, configure generation and build an animation blueprint in one workspace."),
+        FSlateIcon(), FUIAction(FExecuteAction::CreateStatic(&MotionInbetweening::OpenTransitionEditor)));
 }
 
 void FMotionInbetweeningHelloModule::ExecuteMappingSettingsCommand()

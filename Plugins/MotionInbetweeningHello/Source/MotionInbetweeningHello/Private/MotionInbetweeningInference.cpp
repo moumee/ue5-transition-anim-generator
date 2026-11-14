@@ -234,7 +234,7 @@ bool StartMannyInference(const FString& StartInput, const FString& EndInput, con
 	InferenceTicker = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateStatic(&TickInference), 0.1f);
 	if (!IsRunningCommandlet() && FSlateApplication::IsInitialized())
 	{
-		FNotificationInfo Info(FText::FromString(TEXT("Running transition inference... Cancel from the Tools menu.")));
+		FNotificationInfo Info(FText::FromString(TEXT("Running transition inference... Cancel from Motion Transition Editor.")));
 		Info.bFireAndForget = false;
 		Info.ExpireDuration = 8;
 		ProgressNotification = FSlateNotificationManager::Get().AddNotification(Info);
