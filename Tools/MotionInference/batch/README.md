@@ -17,7 +17,7 @@ $config = (Resolve-Path '.\Tools\MotionInference\model_config.local.json').Path
 & $engine $project -run=pythonscript "-script=$PWD\Tools\MotionInference\batch\ue_export_manny_clips.py" -unattended -nullrhi
 ```
 
-Manny 스켈레톤을 쓰는 모든 Animation Sequence를 30fps 전체 길이로 `clips/<이름>/source_manny.json`에 저장합니다. 레퍼런스 스켈레톤은 `clips/skeleton.json`, 목록과 건너뛴 이유는 `clips/manifest.json`에 남습니다. 팀 추출기(`Tools/MannyLafanMapping/Unreal/extract_manny_walk_sequence.py`)를 그대로 호출합니다. Control Rig 포즈 클립과 `/Game/MotionInbetweening/` 결과는 제외합니다.
+Manny 스켈레톤을 쓰는 모든 Animation Sequence를 30fps 전체 길이로 `clips/<이름>/source_manny.json`에 저장합니다. 레퍼런스 스켈레톤은 `clips/skeleton.json`, 목록과 건너뛴 이유는 `clips/manifest.json`에 남습니다. 팀 추출기(`Tools/MannyLafanMapping/Unreal/extract_manny_walk_sequence.py`)를 그대로 호출합니다. Control Rig 포즈 클립과 `/Game/MotionInbetweening/` 결과는 제외합니다. 팀 추출기는 매핑되는 22본만 쓰므로, 플러그인 내보내기와 같은 함수로 전체 본 로컬 포즈를 `clips/<이름>/full_local_pose.json`에 따로 저장합니다.
 
 ## 2. 모델 입력 만들기
 
@@ -53,9 +53,11 @@ $inputs = Get-ChildItem "$env:MIB_BATCH_DIR\clips\MM_*\model_input.json" | ForEa
 & $engine $project -run=pythonscript "-script=$PWD\Tools\MotionInference\batch\ue_import_manny_poses.py" -unattended -nullrhi
 ```
 
-첫 명령은 `Content/Idle_Walk_Jog`의 Idle·Walk·Jog 조합 6개를 플러그인 기본 요청(문맥 = 첫 31샘플의 마지막 10프레임, 목표 = 0번, N=20)으로 생성합니다. 다른 클립은 `--pairs MM_Walk_Fwd:MM_Run_Fwd:WalkToRun ...`처럼 `시작:목적지:이름`으로 지정합니다. 플러그인 역매핑으로 89본 포즈까지 만들고, 그럴듯함 지표를 `transitions/summary.json`에 남깁니다.
+첫 명령은 `Content/Idle_Walk_Jog`의 Idle·Walk·Jog 조합 6개를 플러그인 기본 요청(문맥 = 첫 31샘플의 마지막 10프레임, 목표 = 0번, N=20)으로 생성합니다. 다른 클립은 `--pairs MM_Walk_Fwd:MM_Run_Fwd:WalkToRun ...`처럼 `시작:목적지:이름`으로 지정합니다. 플러그인 역매핑으로 89본 포즈까지 만들고, 그럴듯함 지표를 `transitions/summary.json`에 남깁니다. 포즈는 루트 모션으로 저장합니다. 2단계에서 만든 `model_input.json`에 클립의 root 트랙이 있어야 원본 클립의 root에 맞춰지므로, 이 기능 이전에 만든 작업 폴더는 2단계부터 다시 실행합니다.
 
-두 번째 명령은 `/Game/MotionInbetweening/Baseline`과 `/Improved`에 `AN_<전환>_N20_<버전>` 에셋을 만듭니다. 같은 이름의 이전 에셋은 이 두 폴더 안에서만 교체합니다. 지금 만드는 Baseline은 보정만 끈 현재 어댑터라, 저장소의 Baseline 에셋(목표 방향 수정 전 어댑터)과 목표 방향이 다릅니다. 이전 어댑터 비교를 유지하려면 `transitions/summary.json`에서 Improved 항목만 남기고 가져옵니다. 저장 후 다시 평가해 JSON과의 오차를 `transitions/ue_import_report.json`에 남깁니다.
+손가락·twist·상체 본처럼 역매핑이 채우지 않는 본은 출력 변환 단계가 원본 클립에서 채웁니다([플러그인 README](../../../Plugins/MotionInbetweeningHello/README.md#매핑되지-않는-본)). 2단계가 `full_local_pose.json`을 `model_input.json`에 넣어 두어야 하며, 결과는 `summary.json`의 `unmapped_bones`에 남습니다.
+
+두 번째 명령은 `/Game/MotionInbetweening/Baseline`과 `/Improved`에 `AN_<전환>_N20_<버전>` 에셋을 만듭니다. 같은 이름의 이전 에셋은 이 두 폴더 안에서만 교체합니다. 지금 만드는 Baseline은 보정만 끈 현재 어댑터라, 저장소의 Baseline 에셋(목표 방향 수정 전 어댑터)과 목표 방향이 다릅니다. 이전 어댑터 비교를 유지하려면 `transitions/summary.json`에서 Improved 항목만 남기고 가져옵니다. 에셋의 `Enable Root Motion`은 포즈 파일의 `root_motion.enabled`를 따릅니다. 저장 후 다시 평가해 JSON과의 오차를 `transitions/ue_import_report.json`에 남깁니다.
 
 ## 지표 정의 (`metrics.py`)
 

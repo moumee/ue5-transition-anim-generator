@@ -61,9 +61,10 @@ UE 5.8 Editor 플러그인. **Manny 입력 내보내기**, **외부 추론 실�
 | 파일 | 내용 |
 | --- | --- |
 | `job.json` | 선택 에셋, 경로, 샘플·검증 설정 |
-| `source_manny.json` | Unreal에서 추출한 Manny 본 transform |
+| `source_manny.json` | Unreal에서 추출한 Manny 본 transform (매핑되는 22본) |
+| `full_local_pose.json` | 클립 전체 길이의 89본 로컬 포즈. [매핑되지 않는 본](#매핑되지-않는-본)을 채우는 데 사용 |
 | `raw_135.json` | 팀원 코드가 변환한 원본 135차원 입력 |
-| `model_input.json` | `vectors_tx135`, 관절 순서, 원점·방향 정렬 정보, 정규화 여부, 통계·소스 해시 |
+| `model_input.json` | `vectors_tx135`, 관절 순서, 원점·방향 정렬 정보, 정규화 여부, 통계·소스 해시, 클립의 root 트랙(`source_root_motion`, [루트 모션](#루트-모션) 출력에 사용), 전체 본 포즈(`source_full_pose`) |
 | `result.json` | 성공 여부와 결과 파일 위치. 실패하면 `error.log`에 Python 오류 기록 |
 
 Python은 **3.11 이상 + NumPy**가 필요합니다. 팀원 의존성은 프로젝트의 `Tools/MannyLafanMapping/requirements.txt`에 있습니다. Unreal 내장 Python은 애니메이션 추출에, 별도 Python은 NumPy 변환에 사용합니다. 개인 경로는 `Saved/Config/WindowsEditor/EditorPerProjectUserSettings.ini`에 저장합니다.
@@ -97,7 +98,29 @@ Python은 **3.11 이상 + NumPy**가 필요합니다. 팀원 의존성은 프로
 3. 성공하면 `Content/MotionInbetweening/Generated/AN_Manny_Output*`에 새 에셋을 저장하고 Animation Editor를 엽니다. 매번 고유 이름을 사용하므로 기존 에셋을 덮어쓰지 않습니다.
 4. 처음 기능만 확인하려면 `Plugins/MotionInbetweeningHello/Tests/Fixtures/context_model_output.json`을 선택합니다. 보관된 공식 Context 모델의 실제 31프레임 출력이며, 새 추론이나 학습은 실행하지 않습니다.
 
-출력은 **SKM_Manny_Simple의 89본**, `SK_Mannequin` Skeleton, 부모 기준 local transform, cm·정규화 XYZW quaternion으로 저장합니다. 모델이 제어하는 본은 22개이고 나머지 twist·IK·손가락 본은 reference pose입니다. `root`는 기준 포즈를 유지하고 이동은 `pelvis`에 들어갑니다. Root Motion 기능은 꺼 두었습니다. 에셋을 생성하는 성공 여부와 모션의 시각적 품질은 별도로 확인해야 합니다.
+출력은 **SKM_Manny_Simple의 89본**, `SK_Mannequin` Skeleton, 부모 기준 local transform, cm·정규화 XYZW quaternion으로 저장합니다. 모델이 제어하는 본은 22개입니다. 나머지 중 손가락·twist·상체 본은 [원본 클립에서 채우고](#매핑되지-않는-본), IK 본은 reference pose입니다. 에셋을 생성하는 성공 여부와 모션의 시각적 품질은 별도로 확인해야 합니다.
+
+### 루트 모션
+
+출력 에셋은 **루트 모션**입니다. 지면 위 이동(XY)과 yaw는 `root` 본 트랙에 들어가고 `pelvis`는 root 기준으로 저장하며, 에셋의 `Enable Root Motion`을 켭니다. 팀 역매핑은 root를 기준 포즈에 두고 모든 이동을 pelvis에 넣으므로, `Scripts/manny_root_motion.py`가 그 결과를 root와 pelvis로 다시 나눕니다. 모든 본의 컴포넌트 공간 포즈는 그대로이고, 첫 프레임의 root가 원점·기준 방향이 되도록 클립 전체를 옮깁니다. 높이(Z)와 기울기는 pelvis에 남습니다.
+
+- **원본 클립의 root에 맞춤**: 입력 내보내기가 클립의 root 트랙을 `model_input.json`의 `source_root_motion`에 함께 기록하고, `infer.py`가 문맥 10프레임과 목표 프레임의 원본 pelvis(root 기준)를 출력의 `root_motion_reference`로 전달합니다. 이 프레임들에서는 root를 원본 클립의 root와 똑같이 두므로, root 기준 포즈가 원본과 일치해 루트 모션 클립 사이에 끼워도 어긋나지 않습니다. 예를 들어 A_Idle은 몸이 root보다 약 23° 틀어져 있는데 그 관계가 그대로 유지됩니다.
+- **생성 구간**: root 위치는 pelvis를 따라가되, pelvis→root 오프셋을 시작에서 목표 쪽으로 선형 보간한 뒤 2차 차분 벌점(가중치 300)으로 평활합니다. 걸음마다 좌우로 흔들리는 성분은 pelvis에 남기기 위해서입니다. 평활에는 알려진 프레임과 목표 다음 프레임의 root도 들어가므로 생성 구간의 root 속도는 시작 클립의 속도에서 출발해 도착 클립의 속도로 끝납니다. root yaw는 알려진 yaw 사이를 가장 덜 휘는 곡선으로 잇고, 몸통 회전은 pelvis에 둡니다.
+- **참조가 없을 때**: 직접 가져온 모델 출력이나 이 기능 이전에 내보낸 입력에는 원본 root 정보가 없습니다. 이때는 root를 돌리지 않고, pelvis의 지면 투영을 평활한 경로를 root로 씁니다. 처음과 끝 프레임에서는 pelvis가 기준 포즈의 위치에 오도록 맞춥니다. 원본 클립과 정확히 이으려면 **입력을 다시 내보낸 뒤** 전환을 생성합니다.
+
+어느 방식을 썼는지는 `manny_pose.json`의 `root_motion.source`(`source_clip_roots` 또는 `pelvis_projection`)와 `result.json`의 `root_motion_source`에 남습니다. `root_motion`에는 총 이동 거리·yaw, 첫 프레임을 옮긴 양, pelvis가 기준 위치에서 벗어난 최대 거리도 기록합니다. IK 본(`ik_foot_root` 등)은 기준 포즈 그대로 root를 따라 움직이며 발을 따라가지는 않습니다.
+
+### 매핑되지 않는 본
+
+팀 역매핑은 22본만 채우고 손가락, twist 본, `spine_04`, `spine_05`, `neck_02`(57본)는 reference pose로 둡니다. 그대로 두면 전환을 원본 클립과 이어 붙일 때 이 본들이 튑니다. `Scripts/manny_unmapped_bones.py`가 원본 클립의 값으로 채웁니다.
+
+- **데이터 흐름**: 입력 내보내기가 클립 전체의 89본 로컬 포즈를 `full_local_pose.json`에 쓰고 `model_input.json`의 `source_full_pose`로 옮깁니다. `infer.py`가 두 입력으로 프레임별 참조(`unmapped_bone_reference`)를 만들고, 출력 변환이 이를 적용합니다.
+- **고정 프레임**: 문맥 10프레임은 시작 클립, 마지막 프레임은 도착 클립의 값을 그대로 씁니다.
+- **생성 구간**: 시작 클립이 계속 재생되는 값에서 도착 클립이 목표 샘플에 도달하는 값으로 부드럽게 넘어갑니다. 양쪽 이음매에서 속도가 이어집니다. 처음과 끝이 이어지는 루프 클립은 끝을 넘어 순환하고, 그렇지 않은 클립은 첫·끝 샘플을 유지합니다.
+- **매핑 본 보정**: 채운 본 아래의 매핑 본(쇄골, `neck_01`, `head`)은 모델이 만든 컴포넌트 공간 방향이 유지되도록 로컬 회전을 다시 계산합니다.
+- **참조가 없을 때**: 직접 가져온 모델 출력이나 이 기능 이전에 내보낸 입력이면 이 본들은 reference pose로 남습니다.
+
+결과는 `manny_pose.json`의 `unmapped_bones`와 `result.json`의 `unmapped_bones_source`(`source_clips` 또는 `reference_pose`)에 남습니다. 고정 프레임에서 pelvis 아래 모든 본이 원본 클립과 얼마나 다른지(최대 회전 차이)도 함께 기록합니다.
 
 JSON은 아래 조건을 사용합니다. 이는 플러그인 연결 계약이며 팀 전체의 최종 추론 규격으로 확정한 것은 아닙니다.
 
@@ -124,7 +147,7 @@ JSON은 아래 조건을 사용합니다. 이는 플러그인 연결 계약이�
 | `source_model_output.json` | 가져온 JSON의 원본 사본 |
 | `skeleton.json` | 이번 변환에 사용한 실제 Manny Simple reference skeleton |
 | `job.json` | 원본 위치, 통계·팀 도구 위치 |
-| `manny_pose.json` | 팀 역매핑 결과, 89본 local pose, 원본·통계·도구 해시 |
+| `manny_pose.json` | 팀 역매핑 결과, 루트 모션으로 나눈 89본 local pose와 `root_motion`·`unmapped_bones` 기록, 원본·통계·도구 해시 |
 | `result.json`, `error.log` | 외부 Python 변환 결과와 실패 이유 |
 | `asset_result.json` | 실제 에셋 저장 성공 여부·에셋 경로. `result.json` 성공만으로 에셋 저장 성공을 뜻하지 않음 |
 
@@ -212,7 +235,11 @@ $logPath = Join-Path (Get-Location) 'Saved/Logs/MotionInbetweening-Verify.log'
 
 `MotionInbetweeningOptional.RealModel`은 별도로 선택해 실행하는 실제 모델 통합 검사입니다. `-MIBInferencePython=<Python 절대 경로>`와 `-MIBModelConfig=<모델 설정 절대 경로>`를 함께 전달해야 하며, 누락하면 실패합니다. 공식 Context + Detail의 Walk→Run 출력이 호출기·역매핑을 거쳐 31키·89본 에셋으로 저장되는지 확인합니다. 전체 `MotionInbetweening.` 검사에 자동 포함되지 않으며 시각 품질을 승인하지 않습니다.
 
-`MotionInbetweening.MannyOutputMapping`은 실제 Context 출력 fixture를 두 번 가져와 별도 에셋 저장, 89본·31샘플·30fps·1초, 모든 local 키와 재생 값을 검사합니다. 정규화한 quaternion의 상대 회전으로 오차를 계산합니다. raw 재생 기준은 위치 0.001cm·회전 0.001도이고, 기본 ACL 압축의 정밀도를 참고한 압축 재생 기준은 위치 0.01cm·회전 0.2도입니다.
+`MotionInbetweening.MannyOutputMapping`은 실제 Context 출력 fixture를 두 번 가져와 별도 에셋 저장, 89본·31샘플·30fps·1초, 모든 local 키와 재생 값을 검사합니다. 정규화한 quaternion의 상대 회전으로 오차를 계산합니다. raw 재생 기준은 위치 0.001cm·회전 0.001도이고, 기본 ACL 압축의 정밀도를 참고한 압축 재생 기준은 위치 0.01cm·회전 0.2도입니다. 새로 가져온 에셋은 Root Motion이 켜져 있고, root 트랙이 기준 포즈에서 출발해 이동을 담으며 pelvis는 root 위에 머무는지도 확인합니다. 에셋의 Root Motion 설정은 해당 작업의 `manny_pose.json` 선언과 비교하므로 이전에 가져온 에셋(꺼짐)도 재로딩 검사를 통과합니다.
+
+루트 모션 분리 자체는 `Tests/test_manny_root_motion.py`가 Unreal 없이 검사합니다. 합성 루트 모션 클립으로 알려진 프레임의 root·pelvis가 원본과 일치하는지, 컴포넌트 공간 포즈가 그대로인지, 생성 구간의 root 속도가 양쪽 클립 속도로 이어지는지, 참조가 없을 때의 동작과 잘못된 참조 거부를 확인합니다.
+
+매핑되지 않는 본 채우기는 `Tests/test_manny_unmapped_bones.py`가 검사합니다. 고정 프레임이 원본 클립과 같은지, 매핑 본의 컴포넌트 공간 방향이 유지되는지, 이음매에서 속도가 이어지는지, 루프 클립의 순환과 잘못된 참조 거부를 확인합니다.
 
 Windows에서는 성공한 가져오기 뒤에 실제 JSON 파일을 실행 파일로 지정해 프로세스 시작 실패를 유도하고, 실패 영수증과 이전 성공 상태 초기화를 검사합니다. 이 단계의 Windows `CreateProc failed`/`URL` 경고 2개만 예상 로그로 지정합니다.
 

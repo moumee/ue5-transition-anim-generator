@@ -16,6 +16,8 @@ HERE = Path(__file__).resolve().parent
 PROJECT = HERE.parents[1]
 sys.path[:0] = [str(HERE / "vendor"), str(PROJECT / "Tools/MannyLafanMapping"),
                 str(PROJECT / "Plugins/MotionInbetweeningHello/Scripts")]
+from manny_root_motion import build_reference
+from manny_unmapped_bones import build_reference as build_unmapped_bone_reference
 from prepare_manny_input import file_hash, save_json
 from prepare_manny_output import load_model_output
 from run_manny_inference import read_input
@@ -632,6 +634,11 @@ def generate(runtime, start_path, end_path, transition, start_index=None, target
         "frame_count": len(states), "sample_rate_hz": 30, "normalization_applied": False,
         "position_space": "lafan_start_centered", "rotation_space": "parent_local",
         "alignment": copy.deepcopy(start["alignment"]), "joint_order": start["joint_order"], "parents": start["parents"],
+        # Known frames are the source poses, so the output stage can pin the root bone to the
+        # source clips' roots there. None for inputs exported without source_root_motion.
+        "root_motion_reference": build_reference(start, end, start_index, target_index, transition),
+        # Poses of the bones the model does not drive, from the source clips. None without source_full_pose.
+        "unmapped_bone_reference": build_unmapped_bone_reference(start, end, start_index, target_index, transition),
         "inference": {"pipeline": runtime.pipeline, "device": "cpu", "target_placement": runtime.placement,
             "context_frames": 10, "transition_frames": transition, "internal_window_samples": 12 + transition,
             "start_context_start_index": start_index, "end_target_index": target_index,

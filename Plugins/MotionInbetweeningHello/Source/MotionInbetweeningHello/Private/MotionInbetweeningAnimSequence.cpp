@@ -71,7 +71,7 @@ UAnimSequence* CreateAndSaveAnimation(USkeletalMesh& PreviewMesh, const FAnimati
 	UAnimSequence* Sequence = NewObject<UAnimSequence>(Package, *AssetName, RF_Public | RF_Standalone | RF_Transactional);
 	Sequence->SetSkeleton(Skeleton);
 	Sequence->SetPreviewMesh(&PreviewMesh);
-	Sequence->bEnableRootMotion = false;
+	Sequence->bEnableRootMotion = Data.bRootMotion;
 	IAnimationDataController& Controller = Sequence->GetController();
 	Controller.InitializeModel();
 	bool bTracksWritten = true;

@@ -94,6 +94,9 @@ bool LoadMannyLocalPose(const FString& Filename, const USkeletalMesh& Mesh, FAni
 		|| !Document->TryGetNumberField(TEXT("frame_count"), Count) || Count != Frames->Num()) return false;
 	FAnimationSamples Data;
 	Data.NumSamples = Frames->Num();
+	// Pose files written before root motion support have no such section: root stays at reference.
+	const TSharedPtr<FJsonObject>* RootMotion;
+	if (Document->TryGetObjectField(TEXT("root_motion"), RootMotion)) (*RootMotion)->TryGetBoolField(TEXT("enabled"), Data.bRootMotion);
 	const int32 Numerator = FMath::RoundToInt(Rate * 1000000.0);
 	if (Numerator <= 0) return false;
 	int32 A = Numerator, B = 1000000;

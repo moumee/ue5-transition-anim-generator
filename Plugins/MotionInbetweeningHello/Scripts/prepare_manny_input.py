@@ -24,6 +24,8 @@ def prepare(job):
     mapping_directory = Path(job["mapping_directory"])
     sys.path.insert(0, str(mapping_directory))
     from convert_manny_sequence_135 import convert_sequence
+    from manny_root_motion import source_root_tracks
+    from manny_unmapped_bones import load_source_pose
     from official_context_preprocess import (
         load_stats, normalize, pack_state, project_static_channels,
         start_center_root, unpack_raw_json,
@@ -95,6 +97,11 @@ def prepare(job):
         "alignment": {"reference_frame": 9, "position_offset_xz": position_offset.tolist(),
                       "rotation_offset": rotation_offset.tolist(), "yaw_radians": float(yaw)},
         "vectors_tx135": states.tolist(),
+        # The 135D state has no root bone. Keep the clip's own root so a generated transition
+        # can be saved as root motion that lines up with this clip.
+        "source_root_motion": source_root_tracks(source),
+        # Every bone of the whole clip, for the bones the model does not drive (null for older exports).
+        "source_full_pose": load_source_pose(directory),
         "source_sha256": file_hash(source_path),
         "mapping_source_sha256": {name: file_hash(mapping_directory / name) for name in [
             "manny_lafan_transform.py", "convert_manny_sequence_135.py",

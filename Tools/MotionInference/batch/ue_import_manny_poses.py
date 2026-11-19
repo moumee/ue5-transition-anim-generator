@@ -1,7 +1,7 @@
 """Unreal-side: create Animation Sequences from <batch>/transitions/summary.json (manny_pose.json files).
 
 Mirrors Plugins/MotionInbetweeningHello/Source/.../MotionInbetweeningAnimSequence.cpp: SK_Mannequin skeleton,
-SKM_Manny_Simple preview, 30 fps, one track per reference bone, root motion off. Assets go to
+SKM_Manny_Simple preview, 30 fps, one track per reference bone, root motion as declared by the pose file. Assets go to
 /Game/MotionInbetweening/<Baseline|Improved>/AN_<Pair>_N<length>_<variant>; a previous asset with the
 same name in those folders is overwritten in place. Each asset is re-evaluated after saving and compared with the JSON.
   $env:MIB_BATCH_DIR = "<folder>"   # optional
@@ -23,7 +23,8 @@ ROOT_FOLDER = "/Game/MotionInbetweening"
 
 
 def create(entry, mesh, skeleton):
-    frames = json.load(open(entry["manny_pose"], encoding="utf-8"))["full_local_pose_frames"]
+    document = json.load(open(entry["manny_pose"], encoding="utf-8"))
+    frames = document["full_local_pose_frames"]
     folder = f"{ROOT_FOLDER}/{entry['variant']}"
     name = f"AN_{entry['pair']}_N{entry['length']}_{entry['variant']}"
     path = f"{folder}/{name}"
@@ -37,7 +38,9 @@ def create(entry, mesh, skeleton):
         factory.set_editor_property("target_skeleton", skeleton)
         factory.set_editor_property("preview_skeletal_mesh", mesh)
         sequence = unreal.AssetToolsHelpers.get_asset_tools().create_asset(name, folder, unreal.AnimSequence, factory)
-    sequence.set_editor_property("enable_root_motion", False)
+    # manny_pose.json written with root motion has the travel on the root bone track.
+    root_motion = bool((document.get("root_motion") or {}).get("enabled"))
+    sequence.set_editor_property("enable_root_motion", root_motion)
     controller = sequence.controller              # IAnimationDataController (UE 5.8 Python)
     if hasattr(controller, "initialize_model"):
         controller.initialize_model()
@@ -70,7 +73,7 @@ def create(entry, mesh, skeleton):
             dot = abs(sum(a * b for a, b in zip((q.x, q.y, q.z, q.w), data["local_rotation_xyzw"])))
             worst_r = max(worst_r, 2 * math.degrees(math.acos(min(1.0, dot))))
     return {"asset": sequence.get_path_name(), "frames": len(frames), "tracks": len(bones),
-            "play_length": float(sequence.get_play_length()),
+            "play_length": float(sequence.get_play_length()), "root_motion": root_motion,
             "verify_max_translation_error_cm": worst_t, "verify_max_rotation_error_deg": worst_r}
 
 

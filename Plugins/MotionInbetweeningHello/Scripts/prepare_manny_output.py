@@ -131,6 +131,8 @@ def prepare(job):
     mapping = Path(job['mapping_directory'])
     sys.path.insert(0, str(mapping))
     from convert_lafan_output_to_manny import convert_document
+    from manny_root_motion import apply_root_motion
+    from manny_unmapped_bones import apply as apply_unmapped_bones
 
     source = directory / 'source_model_output.json'
     calibration = json.loads((mapping / 'rest_pose_corrections_22_prototype.json').read_text(encoding='utf-8'))
@@ -146,6 +148,14 @@ def prepare(job):
     converted = convert_document(document, calibration, stats_path=stats, skeleton=skeleton)
     if not converted['validation']['passed']:
         raise ValueError('The team inverse mapper rejected the result: ' + json.dumps(converted['validation']))
+    # The mapper keeps root at its reference pose and moves the pelvis. Put the ground motion
+    # on the root bone instead; poses stay the same in component space.
+    root_motion = apply_root_motion(converted, skeleton, document.get('root_motion_reference'))
+    if not root_motion['passed']:
+        raise ValueError('Root motion extraction failed: ' + json.dumps(root_motion))
+    # The mapper leaves fingers, twist bones and the upper spine at the reference pose; take them
+    # from the source clips when the model output carries their poses.
+    unmapped = apply_unmapped_bones(converted, skeleton, document.get('unmapped_bone_reference'))
     converted['adapter_provenance'] = {
         'source_file': job['source_file'], 'source_sha256': file_hash(source),
         'statistics': statistics, 'skeleton_sha256': file_hash(directory / 'skeleton.json'),
@@ -157,7 +167,9 @@ def prepare(job):
     save_json(directory / 'manny_pose.json', converted)
     return {'success': True, 'sample_count': converted['frame_count'],
             'source_was_normalized': document['normalization_applied'],
-            'heading_restored': 'heading_rotation_offset' in document}
+            'heading_restored': 'heading_rotation_offset' in document,
+            'root_motion_source': root_motion['source'],
+            'unmapped_bones_source': unmapped['source']}
 
 
 def main():

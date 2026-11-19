@@ -22,6 +22,8 @@ struct FAnimationSamples
 {
 	FFrameRate FrameRate = FFrameRate(30, 1);
 	int32 NumSamples = 0;
+	// True when the root bone track carries the character's travel; the asset then enables Root Motion.
+	bool bRootMotion = false;
 	TArray<FBoneSamples> Bones;
 };
 
