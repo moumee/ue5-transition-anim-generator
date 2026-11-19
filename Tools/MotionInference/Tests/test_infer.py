@@ -388,6 +388,44 @@ class ModelTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'end_target_index'):
             generate(self.runtime,self.start,self.end,20,target_index=end['sample_count']-1)
 
+    def test_root_motion_reference_follows_the_inputs(self):
+        plain=generate(self.runtime,self.start,self.end,5)
+        self.assertIsNone(plain['root_motion_reference'])       # the samples predate source_root_motion
+        paths=[]
+        for name,source in (('start',self.start),('end',self.end)):
+            document=json.loads(source.read_text(encoding='utf-8'))
+            count=len(document['vectors_tx135']);identity=[[0.,0.,0.,1.]]*count
+            document['source_root_motion']=dict(
+                pelvis_in_root=dict(translation_cm=[[0.,0.,90.+i] for i in range(count)],rotation_xyzw=identity),
+                root=dict(translation_cm=[[0.,3.*i,0.] for i in range(count)],rotation_xyzw=identity))
+            paths.append(self.directory/f'{name}_root.json');save_json(paths[-1],document)
+        result=generate(self.runtime,paths[0],paths[1],5)
+        reference=result['root_motion_reference']
+        self.assertEqual(reference['frames'],list(range(10))+[15])
+        heights=[row[2] for row in reference['pelvis_in_root']['translation_cm']]
+        first=90.+result['inference']['start_context_start_index']
+        self.assertEqual(heights,[first+i for i in range(10)]+[90.])     # last 10 start samples, then end sample 0
+        np.testing.assert_allclose(reference['next_root_delta']['translation_cm'],[0,3,0],atol=1e-12)
+        np.testing.assert_array_equal(result['predictions_tx135'],plain['predictions_tx135'])
+
+    def test_unmapped_bone_reference_follows_the_inputs(self):
+        plain=generate(self.runtime,self.start,self.end,5)
+        self.assertIsNone(plain['unmapped_bone_reference'])     # the samples predate source_full_pose
+        paths=[]
+        for name,source in (('start',self.start),('end',self.end)):
+            document=json.loads(source.read_text(encoding='utf-8'))
+            count=len(document['vectors_tx135'])
+            document['source_full_pose']=dict(bones=['root','finger'],sample_rate_hz=30.,
+                local=[[[0.,0.,0.,0.,0.,0.,1.],[float(i),0.,0.,0.,0.,0.,1.]] for i in range(count)])
+            paths.append(self.directory/f'{name}_pose.json');save_json(paths[-1],document)
+        result=generate(self.runtime,paths[0],paths[1],5)
+        reference=result['unmapped_bone_reference']
+        self.assertEqual((reference['bones'],reference['pinned_frames']),(['root','finger'],list(range(10))+[15]))
+        first=result['inference']['start_context_start_index']
+        finger=[row[1][0] for row in reference['local']]
+        self.assertEqual(finger[:10]+finger[-1:],[float(first+i) for i in range(10)]+[0.])   # start samples, then end sample 0
+        np.testing.assert_array_equal(result['predictions_tx135'],plain['predictions_tx135'])
+
     def test_swapping_start_and_end_changes_request_result(self):
         a=generate(self.runtime,self.start,self.end,20)
         b=generate(self.runtime,self.end,self.start,20)

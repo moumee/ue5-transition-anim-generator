@@ -5,6 +5,8 @@ Run headless (editor closed):
   UnrealEditor-Cmd.exe <project>.uproject -run=pythonscript -script=<this file> -unattended -nullrhi
 Writes <batch>/clips/<AnimName>/source_manny.json (all frames at 30 fps), <batch>/clips/skeleton.json and
 <batch>/clips/manifest.json. Uses the team's unmodified exporter exactly like Scripts/export_manny_input.py.
+That exporter writes the 22 mapped bones; the plugin's export_full_pose adds full_local_pose.json with every bone,
+which the output stage uses for the bones the mapper does not drive (fingers, twist, upper spine).
 """
 import json
 import os
@@ -54,7 +56,9 @@ def main():
     os.makedirs(OUT, exist_ok=True)
     exporter = runpy.run_path(os.path.join(PROJECT, "Tools/MannyLafanMapping/Unreal/extract_manny_walk_sequence.py"),
                               run_name="mib_team_exporter")
-    mesh = unreal.EditorAssetLibrary.load_asset(MESH_PATH)
+    export_full_pose = runpy.run_path(os.path.join(PROJECT, "Plugins/MotionInbetweeningHello/Scripts/export_manny_input.py"),
+                                      run_name="mib_plugin_exporter")["export_full_pose"]
+    mesh =unreal.EditorAssetLibrary.load_asset(MESH_PATH)
     skeleton = mesh.get_editor_property("skeleton")
     export_skeleton(mesh, os.path.join(OUT, "skeleton.json"))
     manifest = []
@@ -74,6 +78,7 @@ def main():
                 os.makedirs(folder, exist_ok=True)
                 output = os.path.join(folder, "source_manny.json")
                 exporter["export_animation"](path, output, sample_rate_hz=30.0, max_samples=MAX_SAMPLES)
+                export_full_pose(anim, mesh, os.path.join(folder, "full_local_pose.json"), max_samples=MAX_SAMPLES)
                 entry.update(play_length=float(anim.get_play_length()), source=output)
         except Exception:
             entry["skipped"] = traceback.format_exc().strip().splitlines()[-1]

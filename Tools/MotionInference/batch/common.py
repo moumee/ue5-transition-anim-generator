@@ -28,9 +28,13 @@ def legacy_config(config_path, destination):
     config_path = Path(config_path).resolve()
     config = json.loads(config_path.read_text(encoding="utf-8-sig"))
     legacy = copy.deepcopy(config)
-    for key in ("context_checkpoint", "context_statistics", "detail_checkpoint", "detail_statistics"):
-        if isinstance(legacy.get(key), str):
-            legacy[key] = str((config_path.parent / legacy[key]).resolve())
+    # The copy lives in the batch folder, so relative model paths must be made absolute,
+    # including those of the optional long-transition model.
+    long_model = legacy.get("long_transition_model")
+    for section in (legacy, long_model if isinstance(long_model, dict) else {}):
+        for key in ("context_checkpoint", "context_statistics", "detail_checkpoint", "detail_statistics"):
+            if isinstance(section.get(key), str):
+                section[key] = str((config_path.parent / section[key]).resolve())
     legacy["frame_refinement"] = None
     legacy["input_z_clamp"] = None
     legacy["twist_transfer"] = None

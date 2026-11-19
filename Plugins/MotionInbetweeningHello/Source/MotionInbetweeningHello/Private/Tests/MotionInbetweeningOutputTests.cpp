@@ -26,10 +26,11 @@ void VerifyOutputAsset(FAutomationTestBase& Test, const FString& Directory, cons
 	if (!Test.TestNotNull(TEXT("Imported animation loads"), Animation) || !Test.TestNotNull(TEXT("Manny Simple loads"), Mesh)) return;
 	Test.TestTrue(TEXT("Manny skeleton matches"), Animation->GetSkeleton() == Mesh->GetSkeleton());
 	Test.TestTrue(TEXT("Simple preview mesh persisted"), Animation->GetPreviewMesh() == Mesh);
-	Test.TestFalse(TEXT("Root motion remains disabled"), Animation->bEnableRootMotion);
 	FString Error;
 	MotionInbetweening::FAnimationSamples Expected;
 	if (!Test.TestTrue(TEXT("Load source local poses"), MotionInbetweening::LoadMannyLocalPose(Directory / TEXT("manny_pose.json"), *Mesh, Expected, Error))) return;
+	// Assets imported before root motion support keep it off; their pose files do not declare it.
+	Test.TestTrue(TEXT("Root motion flag follows the pose file"), Animation->bEnableRootMotion == Expected.bRootMotion);
 	const IAnimationDataModel* Model = Animation->GetDataModel();
 	if (!Test.TestNotNull(TEXT("Animation data model exists"), Model)) return;
 	Test.TestEqual(TEXT("All 89 mesh tracks"), Model->GetNumBoneTracks(), 89);
@@ -96,6 +97,20 @@ public:
 		if (!Test->TestTrue(*FString::Printf(TEXT("Output import succeeds: %s"), *Result.Error), Result.bSuccess)) return true;
 		Test->TestEqual(TEXT("31 model samples imported"), Result.SampleCount, 31);
 		VerifyOutputAsset(*Test, Result.OutputDirectory, Result.AssetPath);
+		if (const UAnimSequence* Imported = LoadObject<UAnimSequence>(nullptr, *Result.AssetPath))
+		{
+			Test->TestTrue(TEXT("New imports enable root motion"), Imported->bEnableRootMotion);
+			TArray<FTransform> RootKeys, PelvisKeys;
+			Imported->GetDataModel()->GetBoneTrackTransforms(FName(TEXT("root")), RootKeys);
+			Imported->GetDataModel()->GetBoneTrackTransforms(FName(TEXT("pelvis")), PelvisKeys);
+			if (Test->TestTrue(TEXT("Root and pelvis tracks exist"), RootKeys.Num() == 31 && PelvisKeys.Num() == 31))
+			{
+				// The fixture walks about a metre: the travel belongs on the root, not the pelvis.
+				Test->TestTrue(TEXT("Root starts at the reference pose"), RootKeys[0].Equals(FTransform::Identity, 0.001));
+				Test->TestTrue(TEXT("Root track carries the travel"), FVector::Dist2D(RootKeys[0].GetTranslation(), RootKeys.Last().GetTranslation()) > 50.0);
+				Test->TestTrue(TEXT("Pelvis stays over the root"), FVector::Dist2D(PelvisKeys[0].GetTranslation(), PelvisKeys.Last().GetTranslation()) < 15.0);
+			}
+		}
 		if (FirstAsset.IsEmpty())
 		{
 			FirstAsset = Result.AssetPath;

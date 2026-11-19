@@ -3,7 +3,8 @@
 Uses the plugin's default request: context = last 10 of the first 31 exported samples, target =
 destination sample 0, N = --length. Each result is mapped to the 89-bone Manny pose with the
 plugin's Scripts/prepare_manny_output.py and listed in <batch>/transitions/summary.json, which
-ue_import_manny_poses.py turns into Animation Sequences.
+ue_import_manny_poses.py turns into Animation Sequences. Bones the mapper leaves at the reference pose (fingers,
+twist, upper spine) follow the source clips when both model inputs carry source_full_pose.
   python make_comparison_transitions.py --config <model_config.local.json> [--batch-dir <folder>]
       [--pairs START:END:LABEL ...]
 The default pairs are the six Idle/Walk/Jog transitions of Content/Idle_Walk_Jog.
@@ -66,13 +67,14 @@ def main():
                                      "source_file": str(target / "source_model_output.json"), "statistics_file": ""})
             if not mapped.get("success"):
                 raise RuntimeError(f"Inverse mapping failed for {variant}/{label}: {mapped}")
+            filled = json.loads((target / "manny_pose.json").read_text(encoding="utf-8"))["unmapped_bones"]
             p, r = metrics.decode(result["predictions_tx135"])
             m = metrics.transition_metrics(p, r, 10, 10 + args.length, offsets, ground)
             diagnostics = result["inference"]["diagnostics"]
             summary.append({"variant": variant, "pair": label, "start": start_clip, "end": end_clip,
                             "length": args.length, "start_index": start_index, "frames": result["frame_count"],
                             "boundary_correction_cm": diagnostics["horizontal_boundary_correction"]["max_correction_cm"],
-                            **m, "manny_pose": str(target / "manny_pose.json")})
+                            **m, "unmapped_bones": filled, "manny_pose": str(target / "manny_pose.json")})
     (out / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"{'pair':12s} {'variant':9s} {'boundary corr cm':>16s} {'foot slide cm/f':>15s} {'speed reversals':>15s} {'joint acc deg':>13s} {'min toe cm':>10s}")
     for row in sorted(summary, key=lambda r: (r["pair"], r["variant"])):
